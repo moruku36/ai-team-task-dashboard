@@ -19,3 +19,8 @@ node_modules/
 .next/
 .DS_Store
 Thumbs.db
+
+# Backlog.md MVP: pinned binary, task data and synthetic test results stay local.
+.runtime/
+/data/
+/results/
