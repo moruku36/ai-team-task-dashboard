@@ -1,5 +1,5 @@
 // Real headless-browser test of the OFFICIAL standard Backlog.md v1.53.0 web UI (/board) on Windows.
-// Usage: node tests/frontend.mjs [--exe <backlog.exe>] [--browser chrome|edge] [--results-dir <dir>]
+// Usage: node tests/frontend.mjs [--exe <backlog.exe>] [--browser chrome|edge] [--results-dir <dir>] [--preflight-only]
 // No npm dependencies: Chrome DevTools Protocol over Node 22's built-in WebSocket. No GUI (headless=new).
 // Uses an isolated temp no-git data root, a COPY of the pinned binary, synthetic tasks and a throw-away
 // browser profile. It never reads the browser profile or its logs.
@@ -28,11 +28,13 @@ const browsers = {
   edge: 'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
 };
 const browserName = arg('--browser', 'chrome');
+const preflightOnly = process.argv.includes('--preflight-only');
+const PINNED_SHA256 = 'f5d4678ababa11e36866186e897a86e68e9f1f3c263d6c97034f674622abc689';
 const LIMIT_MS = 10_000;
 const PS = ['powershell.exe', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass'];
 
 const checks = [];
-const metrics = {};
+const metrics = { childProcessStarts: 0 };
 const children = new Set();
 const ownedDirs = [];
 let root, exe, binDir, profileDir, server, base, port, chrome, cdp;
@@ -69,6 +71,7 @@ function kill(p) {
 }
 function run(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
+    metrics.childProcessStarts++;
     const p = spawn(cmd, args, { windowsHide: true, ...opts });
     children.add(p);
     let out = '';
@@ -95,6 +98,7 @@ const sha = (f) => crypto.createHash('sha256').update(fs.readFileSync(f)).digest
 
 // ---- official server (same port across restarts) ----
 async function startServer() {
+  metrics.childProcessStarts++;
   server = spawn(exe, ['browser', '--no-open', '--non-interactive', '--port', String(port)], {
     env: { ...process.env, BACKLOG_CWD: root }, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -201,16 +205,19 @@ async function main() {
   if (!srcExe) throw new Error('backlog.exe not found (use --exe or scripts\\Install-Backlog.ps1)');
   if (typeof WebSocket === 'undefined') throw new Error('Node built-in WebSocket unavailable (need Node 22+)');
   const browserExe = browsers[browserName];
-  if (!browserExe || !fs.existsSync(browserExe)) throw new Error(`browser not found: ${browserName}`);
+  if (!preflightOnly && (!browserExe || !fs.existsSync(browserExe))) throw new Error(`browser not found: ${browserName}`);
 
   // Isolated root + explicit separate binary copy (verified identical to the pinned one).
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-ttd-fe-')); ownedDirs.push(root);
   binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-ttd-febin-')); ownedDirs.push(binDir);
   exe = path.join(binDir, 'backlog.exe');
   fs.copyFileSync(srcExe, exe);
+  // The official pinned digest must match BEFORE ANY subprocess can execute this copy.
+  check('binary matches official pinned SHA-256 before execution', sha(exe) === PINNED_SHA256);
   check('separate binary copy is byte-identical to the pinned binary', sha(exe) === sha(srcExe));
   const ver = (await run(exe, ['--version'])).out.trim();
   check('binary reports v1.53.0', /1\.53\.0/.test(ver), { version: ver.slice(0, 40) });
+  if (preflightOnly) return;
   let git = false;
   for (let d = root; ; d = path.dirname(d)) { if (fs.existsSync(path.join(d, '.git'))) git = true; if (path.dirname(d) === d) break; }
   check('temp data root is outside any git workspace', !git);
@@ -232,6 +239,7 @@ async function main() {
   // Headless browser, isolated profile, loopback-only debugging port.
   profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-ttd-feprof-')); ownedDirs.push(profileDir);
   const debugPort = await freePort();
+  metrics.childProcessStarts++;
   chrome = spawn(browserExe, [
     '--headless=new', '--no-first-run', '--no-default-browser-check',
     '--remote-debugging-address=127.0.0.1', `--remote-debugging-port=${debugPort}`,
@@ -353,13 +361,14 @@ finally {
   const continuity = metrics.continuity?.pass;
   const result = {
     started, finished: new Date().toISOString(), node: process.version, browser: browserName, backlogVersion: '1.53.0',
-    executionCompleted: !failure, ok: !failure && continuity === true, error: failure?.message,
+    scope: preflightOnly ? 'binary-preflight-only' : 'full-frontend',
+    executionCompleted: !failure, ok: !failure && (preflightOnly || continuity === true), error: failure?.message,
     standardUiContinuedUpdates: continuity === undefined ? 'NOT-RUN' : continuity ? 'PASS' : 'FAIL',
     checks, metrics, tempDirsRemoved: removed,
   };
   fs.mkdirSync(resultsDir, { recursive: true });
-  const file = path.join(resultsDir, `frontend-${started.replace(/[:.]/g, '-')}.json`);
+  const file = path.join(resultsDir, `${preflightOnly ? 'binary-preflight' : 'frontend'}-${started.replace(/[:.]/g, '-')}.json`);
   fs.writeFileSync(file, JSON.stringify(result, null, 2));
   console.log(`${result.ok ? 'OK' : 'FAILED'}: ${checks.filter((c) => c.ok).length}/${checks.length} checks; standardUiContinuedUpdates=${result.standardUiContinuedUpdates}; results: ${file}`);
-  process.exit(failure ? 1 : continuity === false ? 3 : continuity === true ? 0 : 1);
+  process.exit(failure ? 1 : preflightOnly ? 0 : continuity === false ? 3 : continuity === true ? 0 : 1);
 }
