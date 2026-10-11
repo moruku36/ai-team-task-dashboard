@@ -4,7 +4,7 @@
 
 **Backlog.md v1.53.0（公式・版固定）によるWindowsローカルMVPを実装しました。独自UI/REST wrapperはありません。2026-10-11に採用と即実装が承認されました。実タスクの取込みと外部公開は後続段階です。** 構成は **[Backlog.md MVP構成（最終）](docs/09-backlog-md-architecture.ja.md)** を参照してください。選定経緯は[OSS再選定提案](docs/oss-reselection-20261011.ja.md)です。
 
-検証記録：[合成32項目と実測時間](docs/11-validation-20261011.ja.md)。共通更新手順：[AIの更新プロトコル](docs/10-agent-update-protocol.ja.md)。
+検証記録：[訂正済み検証記録と再接続の未達要件](docs/11-validation-20261011.ja.md)。共通更新手順：[AIの更新プロトコル](docs/10-agent-update-protocol.ja.md)。
 
 ### 使い方（PowerShell）
 
@@ -23,7 +23,7 @@ data rootはコードrepoやgitワークスペースの外に置く必要があ�
 - 最優先は「AIが更新する → 保存を確認する → 開いた画面へ反映する」の一続きの経路です。人手転記を通常経路にしません。
 - Backlog.mdの公式CLI/MCPと標準Web画面を採用しました。Windowsローカル、共通のタスク保存先、1タスク1主担当を想定します。
 - 利用者別認証/RBAC、古い入力を拒否するCAS、クラウドAIからの実接続などには制約や未検証点があります。標準機能だけで解決済みとは扱いません。
-- 確認済み：一時rootでの合成CLI/HTTP/WebSocket試験。未実施：実データ、GUI確認、クラウドAIの実接続、自動起動、外部公開です。
+- 確認済み：合成CLI/MCP/HTTP/WSとheadless Chromeでの実DOM/通信。**標準v1.53.0は切断・server再起動後、継続更新を戻すため明示的ページ再読込が必要です**。health復旧は一度の再取得だけです。上流UI/binaryは改変していません。実データ、対話的GUI、クラウドAI実接続、自動起動、外部公開は未実施です。
 - 将来の認証付き外部閲覧・常時稼働ホストは独立した設計段階です。公開GitHubリポジトリに実タスクを保存する計画ではありません。
 
 ## 置換済みの初版資料

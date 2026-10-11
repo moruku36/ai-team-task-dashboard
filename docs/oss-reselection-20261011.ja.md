@@ -266,7 +266,7 @@ Backlog.mdのassignee、label、description、references、notes等の既存項�
 
 ### 「リアルタイム」の受入目標
 
-標準のhealth接続は切断後5秒で再接続を試み、復旧時はdataを再取得します。これはserver接続の検知であり、各AIが動いているかの監視ではありません。[再接続実装](https://github.com/MrLesk/Backlog.md/blob/v1.53.0/src/web/hooks/useHealthCheck.tsx)
+標準のhealth接続は切断後5秒で再接続を試み、復旧時は一度dataを再取得します。後続の実headless試験で、v1.53.0のデータ通知用WebSocketは再接続せず、server再起動後の継続更新には明示的ページ再読込が必要だと確認しました（[訂正済み検証記録](11-validation-20261011.ja.md)）。health復旧だけを継続表示の復旧と扱いません。各AIが動いているかの監視でもありません。[health再接続実装](https://github.com/MrLesk/Backlog.md/blob/v1.53.0/src/web/hooks/useHealthCheck.tsx)
 
 初期案は、**task保存を確認してから画面反映まで10秒以内**です。Backlog.mdではWebSocketによる標準更新を使い、polling画面の自作を必須にしません。数値は設計目標で、実測済み性能ではありません。
 

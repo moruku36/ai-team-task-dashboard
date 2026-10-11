@@ -1,5 +1,7 @@
-// Synthetic CLI/HTTP/WebSocket integration test for the official Backlog.md v1.53.0 (Windows).
+// Synthetic CLI/HTTP/WebSocket transport integration test for the official Backlog.md v1.53.0 (Windows).
 // Usage: node tests/integration.mjs [--exe <backlog.exe>] [--results-dir <dir>]
+// This does NOT drive the browser UI: the WebSocket here is a hand-made client, so reconnect/restart checks prove the
+// server side only. UI behaviour (incl. continued updates after a restart) is covered by tests/frontend.mjs.
 // No npm dependencies. Uses only an isolated temp no-git data root and synthetic tasks; never the default data root.
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -52,7 +54,7 @@ function run(cmd, args, opts = {}) {
     p.on('error', reject);
   });
 }
-const cli = (...args) => run(exe, args, { env: { ...process.env, BACKLOG_CWD: root } });
+const cli = (...args) => run(exe, args, { env: { ...process.env, BACKLOG_CWD: root, USE_GLOBAL_TASK_ID_LOCK: 'true' } });
 async function cliOk(...args) {
   const r = await cli(...args);
   if (r.code !== 0) throw new Error(`backlog ${args.slice(0, 2).join(' ')} failed (${r.code}): ${r.out.slice(0, 300)}`);
@@ -93,10 +95,12 @@ async function stopServer() {
   kill(p);
   await until('server exit', async () => p.exitCode !== null || p.signalCode !== null, 10_000);
 }
+// The real UI loads tasks from GET /api/search (upstream App.tsx loadAllData/refreshTasksData) and keeps the
+// results with type === 'task' (App.applySearchResults: `results.filter(r => r.type === 'task').map(r => r.task)`).
 const getTasks = async () => {
-  const r = await fetch(`${base}/api/tasks`);
-  if (!r.ok) throw new Error(`/api/tasks ${r.status}`);
-  return r.json();
+  const r = await fetch(`${base}/api/search`);
+  if (!r.ok) throw new Error(`/api/search ${r.status}`);
+  return (await r.json()).filter((result) => result.type === 'task').map((result) => result.task);
 };
 
 function connectWs() {
@@ -110,7 +114,7 @@ function connectWs() {
 }
 
 async function withMcp(fn) {
-  const p = spawn(exe, ['mcp', 'start', '--cwd', root], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  const p = spawn(PS[0], [...PS.slice(1), '-File', path.join(repo, 'scripts', 'backlog.ps1'), '-DataRoot', root, '-ExePath', exe, 'mcp', 'start'], { env: { ...process.env, USE_GLOBAL_TASK_ID_LOCK: 'false' }, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   children.add(p); p.stderr.resume();
   let buffer = '', sequence = 0;
   const pending = new Map();
@@ -136,7 +140,7 @@ async function withMcp(fn) {
   } finally { kill(p); children.delete(p); }
 }
 
-// Runs `action` (a CLI update), then waits for tasks-updated and the follow-up /api/tasks refetch
+// Runs `action` (a CLI update), then waits for tasks-updated and the follow-up /api/search refetch
 // that the UI performs, and asserts `predicate(tasks)` within LIMIT_MS of the save being confirmed.
 async function expectLive(label, action, predicate) {
   const t0 = performance.now();
@@ -222,7 +226,7 @@ async function main() {
 
   ws = await connectWs();
   check('WebSocket connected', ws.readyState === WebSocket.OPEN);
-  check(`${TOTAL - 1} seed tasks visible via /api/tasks`, (await getTasks()).length === TOTAL - 1);
+  check(`${TOTAL - 1} seed tasks visible via /api/search (UI task path)`, (await getTasks()).length === TOTAL - 1);
 
   // Lifecycle: create -> In Progress -> Awaiting Approval -> Done.
   let life;
@@ -261,13 +265,15 @@ async function main() {
   });
   check('same-task concurrent accepted notes preserved', true, { accepted: same.filter(r => r.code === 0).length, rejected: same.filter(r => r.code !== 0).length });
 
-  // Reconnect: drop the socket and open a new one; updates still arrive.
+  // Transport-only: this test script closes its own WebSocket and opens a new one by hand. The standard UI does not
+// do this for its data socket (see tests/frontend.mjs), so this is not evidence of UI reconnect behaviour.
   ws.close();
   await sleep(300);
   ws = await connectWs();
-  tasks = await expectLive('after-ws-reconnect', () => cliOk('task', 'edit', seedIds[5], '-s', 'Blocked', '--append-notes', meta('reconnect', 'unblock')), (t) => find(t, seedIds[5])?.status === 'Blocked');
+  tasks = await expectLive('after-manual-ws-reconnect', () => cliOk('task', 'edit', seedIds[5], '-s', 'Blocked', '--append-notes', meta('reconnect', 'unblock')), (t) => find(t, seedIds[5])?.status === 'Blocked');
 
-  // Restart: update while the server is down is visible after restart; live updates resume.
+  // Restart (transport-only): state persisted and down-time update visible after restart; a NEW hand-made WebSocket
+// client then receives updates. Says nothing about an already-open browser page.
   ws.close();
   await stopServer();
   await cliOk('task', 'edit', seedIds[6], '-s', 'Done', '--append-notes', meta('while-down', 'none'));
@@ -276,7 +282,7 @@ async function main() {
   check('state persisted and down-time update visible after restart', tasks.length === TOTAL && find(tasks, seedIds[6])?.status === 'Done' && find(tasks, life)?.status === 'Done');
   wsMessages.length = 0;
   ws = await connectWs();
-  await expectLive('after-server-restart', () => cliOk('task', 'edit', seedIds[7], '-s', 'In Progress', '--append-notes', meta('restart', 'work')), (t) => find(t, seedIds[7])?.status === 'In Progress');
+  await expectLive('after-server-restart-new-manual-ws', () => cliOk('task', 'edit', seedIds[7], '-s', 'In Progress', '--append-notes', meta('restart', 'work')), (t) => find(t, seedIds[7])?.status === 'In Progress');
 
   // Explicitly demonstrate the product boundary: old intent is accepted, not rejected by CAS.
   const staleId = seedIds[10];
@@ -285,6 +291,31 @@ async function main() {
   await cliOk('task', 'edit', staleId, '-s', 'In Progress');
   await until('stale intent visible', async () => find(await getTasks(), staleId)?.status === 'In Progress');
   check('stale status intent is accepted: CAS is not enforced', true);
+
+  // Exercise the actual wrapper in PowerShell 5.1, whose native binding otherwise drops empty args/quotes.
+  const wrapper = async (...args) => {
+    const payload = Buffer.from(JSON.stringify(args), 'utf8').toString('base64');
+    const psQuote = s => "'" + s.replaceAll("'", "''") + "'";
+    const script = `$ProgressPreference='SilentlyContinue'; $a = [string[]]([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${payload}')) | ConvertFrom-Json); & ${psQuote(path.join(repo, 'scripts', 'backlog.ps1'))} -DataRoot ${psQuote(root)} -ExePath ${psQuote(exe)} @a; exit $LASTEXITCODE`;
+    const result = await run(PS[0], [...PS.slice(1), '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { env: { ...process.env, USE_GLOBAL_TASK_ID_LOCK: 'false' } });
+    if (result.code !== 0) throw new Error(`wrapper failed (${result.code}): ${result.out.slice(0, 2000)}`);
+    return result.out;
+  };
+  const title = 'Synthetic 日本語 "quoted"';
+  const description = 'Synthetic 日本語 "embedded quotes"\nsecond line\ntrailing backslash\\';
+  await cliOk('config', 'set', 'defaultAssignee', 'synthetic-default');
+  await wrapper('task', 'create', title, '-d', description, '-a', '', '--plain');
+  let wrapped;
+  await until('wrapper-created task visible', async () => (wrapped = (await getTasks()).find(t => t.title === title)));
+  check('PowerShell 5.1 wrapper preserves empty assignee, quotes, Japanese and newline', wrapped.assignee.length === 0 && wrapped.description === description);
+  await wrapper('task', 'edit', wrapped.id, '-a', 'synthetic-owner', '-s', 'In Progress', '--append-notes', description);
+  await until('wrapper edit visible', async () => { wrapped = find(await getTasks(), wrapped.id); return wrapped?.status === 'In Progress'; });
+  check('PowerShell 5.1 wrapper edit preserves quoted multiline notes', wrapped.assignee.length === 1 && wrapped.assignee[0] === 'synthetic-owner' && wrapped.implementationNotes.includes(description));
+  await cliOk('task', 'archive', wrapped.id);
+  await until('wrapper synthetic cleanup reflected', async () => (await getTasks()).length === TOTAL);
+  check('wrapper synthetic task archived; original 30 retained', true);
+  const listed = JSON.parse(await wrapper('task', 'list', '--json'));
+  check('wrapper keeps machine-readable stdout streaming', listed.kind === 'task-list' && listed.tasks.length === TOTAL);
 }
 
 let failure;
@@ -296,7 +327,13 @@ finally {
   try { ws?.close(); } catch {}
   for (const p of children) kill(p);
   await sleep(500);
-  try { if (root) fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }); } catch (e) { console.error(`cleanup warning: ${e.message}`); }
+  try {
+    if (root) {
+      if (path.dirname(root) !== os.tmpdir() || !path.basename(root).startsWith('ai-ttd-test-')) throw new Error('Invalid cleanup target');
+      fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+      if (fs.existsSync(root)) throw new Error('Temp root still exists after cleanup');
+    }
+  } catch (e) { failure ??= new Error(`cleanup failed: ${e.message}`); console.error(`FAIL ${failure.message}`); }
   const result = { started, finished: new Date().toISOString(), node: process.version, backlogExe: path.basename(exe ?? ''), ok: !failure, error: failure?.message, checks, timings, tempRootRemoved: root ? !fs.existsSync(root) : null };
   fs.mkdirSync(resultsDir, { recursive: true });
   const file = path.join(resultsDir, `integration-${started.replace(/[:.]/g, '-')}.json`);

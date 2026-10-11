@@ -24,9 +24,9 @@ CLIの成功後にtaskを再取得し、ID・主担当・status・notesを照合
 
 ## MCPと表示
 
-登録は未実施です。将来明示的に登録する場合の起動コマンドは、検証済みbinaryの `backlog.exe mcp start --cwd <共通root>` です。stdioはローカルclientのための通信で、remote MCP endpointではありません。rootを固定しない起動は使いません。
+登録は未実施です。将来明示的に登録する場合の起動コマンドは、`powershell.exe -NoProfile -File scripts/backlog.ps1 -DataRoot <共通root> mcp start` です（必要なら-ExePathも指定）。wrapperが共通rootとlock環境を固定し、raw stdioを中継します。Windows標準のPowerShell/.NETのみを使い、新しいruntimeは不要です。stdioはローカルclientのための通信で、remote MCP endpointではありません。rootを固定しない起動は使いません。
 
-標準Web画面は接続状態を表示し、切断後に再接続します。task詳細のnotesで最新の観測・報告時刻を確認します。全カードの観測時刻やAIの生存状況を常時表示する機能はMVPに含めません。
+標準Web画面のhealth接続だけが自動再接続します。server再起動後に接続表示が戻っても、データ通知用接続は閉じたままで継続更新が止まります。**切断・server再起動後はページを明示的に再読込してください**。headless試験では再読込後の次のCLI更新もDOMへ反映しました。task詳細のnotesで最新の観測・報告時刻を確認します。全カードの観測時刻やAIの生存状況を常時表示する機能はMVPに含めません。
 
 ## ローカル保存と復旧
 
