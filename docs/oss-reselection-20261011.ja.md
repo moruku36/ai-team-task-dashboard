@@ -1,7 +1,7 @@
 # AIチームのタスク状況を見渡すためのOSS再選定
 
 確認日：2026年10月11日  
-状態：選定提案。採用は未承認。導入・実装・接続設定・アプリの外部公開は未実施。
+状態：選定時点の参考記録。2026-10-11にBacklog.mdの採用と即実装が承認されました。現行の実装範囲は [Backlog.md MVP構成（最終）](09-backlog-md-architecture.ja.md) を参照。以下の未承認・未実装という記述は提案時点の履歴であり、現状はREADMEと現行構成を優先します。実タスクの取込みと外部公開は後続段階です。
 
 ## 結論
 
@@ -266,7 +266,7 @@ Backlog.mdのassignee、label、description、references、notes等の既存項�
 
 ### 「リアルタイム」の受入目標
 
-標準のhealth接続は切断後5秒で再接続を試み、復旧時はdataを再取得します。これはserver接続の検知であり、各AIが動いているかの監視ではありません。[再接続実装](https://github.com/MrLesk/Backlog.md/blob/v1.53.0/src/web/hooks/useHealthCheck.tsx)
+標準のhealth接続は切断後5秒で再接続を試み、復旧時は一度dataを再取得します。後続の実headless試験で、v1.53.0のデータ通知用WebSocketは再接続せず、server再起動後の継続更新には明示的ページ再読込が必要だと確認しました（[訂正済み検証記録](11-validation-20261011.ja.md)）。health復旧だけを継続表示の復旧と扱いません。各AIが動いているかの監視でもありません。[health再接続実装](https://github.com/MrLesk/Backlog.md/blob/v1.53.0/src/web/hooks/useHealthCheck.tsx)
 
 初期案は、**task保存を確認してから画面反映まで10秒以内**です。Backlog.mdではWebSocketによる標準更新を使い、polling画面の自作を必須にしません。数値は設計目標で、実測済み性能ではありません。
 
