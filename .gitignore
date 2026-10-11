@@ -1,0 +1,21 @@
+# Live data and secrets must never be committed.
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
+config.php
+data/
+backups/
+exports/
+logs/
+*.log
+node_modules/
+.next/
+.DS_Store
+Thumbs.db

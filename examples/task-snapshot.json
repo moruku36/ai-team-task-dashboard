@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "snapshot_id": "demo-snapshot-0001",
+  "source_instance_id": "fictional-kanboard-instance",
+  "source_revision": 1,
+  "generated_at": "2026-10-10T00:00:00Z",
+  "notice": "Fictional example only. Not a native Kanboard export or an execution authorization.",
+  "tasks": [
+    {
+      "id": "DEMO-001",
+      "title": "サンプル画面の一覧を確認する",
+      "status": "verification",
+      "priority": "P2",
+      "task_owner_ai": "デモ・レビュー担当",
+      "next_action": "架空10件で待ち理由の区別を確認する",
+      "evidence_urls": [
+        "https://example.com/demo/evidence/DEMO-001"
+      ],
+      "current_commit": null,
+      "last_verified_at": "2026-10-10T00:00:00Z",
+      "next_check_at": "2026-10-12T00:00:00Z",
+      "completed_at": null,
+      "verification": {
+        "implementation": {
+          "status": "not_applicable",
+          "evidence_url": null,
+          "verified_at": null,
+          "commit": null
+        },
+        "synthetic_test": {
+          "status": "not_run",
+          "evidence_url": null,
+          "verified_at": null,
+          "commit": null
+        },
+        "live_connection": {
+          "status": "not_applicable",
+          "evidence_url": null,
+          "verified_at": null,
+          "commit": null
+        },
+        "publication": {
+          "status": "not_applicable",
+          "evidence_url": null,
+          "verified_at": null,
+          "commit": null
+        }
+      },
+      "approval": {
+        "status": "not_required",
+        "explicit_approval_scope": null,
+        "evidence_url": null,
+        "expires_at": null
+      }
+    },
+    {
+      "id": "DEMO-002",
+      "title": "デモ用ホストの選択を相談する",
+      "status": "waiting_owner",
+      "priority": "P3",
+      "task_owner_ai": "デモ・調査担当",
+      "next_action": "候補と費用上限について本人に確認する",
+      "evidence_urls": [],
+      "current_commit": null,
+      "last_verified_at": "2026-10-10T00:00:00Z",
+      "next_check_at": null,
+      "completed_at": null,
+      "verification": {
+        "implementation": {
+          "status": "not_applicable",
+          "evidence_url": null,
+          "verified_at": null,
+          "commit": null
+        },
+        "synthetic_test": {
+          "status": "not_applicable",
+          "evidence_url": null,
+          "verified_at": null,
+          "commit": null
+        },
+        "live_connection": {
+          "status": "not_applicable",
+          "evidence_url": null,
+          "verified_at": null,
+          "commit": null
+        },
+        "publication": {
+          "status": "not_applicable",
+          "evidence_url": null,
+          "verified_at": null,
+          "commit": null
+        }
+      },
+      "approval": {
+        "status": "pending",
+        "explicit_approval_scope": null,
+        "requested_scope": "架空サービスの利用先選択。作成・課金・公開は未承認。",
+        "evidence_url": null,
+        "expires_at": null
+      }
+    },
+    {
+      "id": "DEMO-003",
+      "title": "架空タスクの記入例を整理する",
+      "status": "done",
+      "priority": "P3",
+      "task_owner_ai": "デモ・文書担当",
+      "next_action": "なし（例示上の完了）",
+      "evidence_urls": [
+        "https://example.com/demo/evidence/DEMO-003"
+      ],
+      "current_commit": null,
+      "last_verified_at": "2026-10-09T00:00:00Z",
+      "next_check_at": null,
+      "completed_at": "2026-10-09T00:00:00Z",
+      "verification": {
+        "implementation": {
+          "status": "not_applicable",
+          "evidence_url": null,
+          "verified_at": null,
+          "commit": null
+        },
+        "synthetic_test": {
+          "status": "not_applicable",
+          "evidence_url": null,
+          "verified_at": null,
+          "commit": null
+        },
+        "live_connection": {
+          "status": "not_applicable",
+          "evidence_url": null,
+          "verified_at": null,
+          "commit": null
+        },
+        "publication": {
+          "status": "not_applicable",
+          "evidence_url": null,
+          "verified_at": null,
+          "commit": null
+        }
+      },
+      "approval": {
+        "status": "not_required",
+        "explicit_approval_scope": null,
+        "evidence_url": null,
+        "expires_at": null
+      }
+    }
+  ],
+  "source_updated_at": "2026-10-10T00:00:00Z"
+}
