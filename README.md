@@ -1,12 +1,23 @@
 # AI Team Task Dashboard
 
+Language: **English** | [日本語](README.ja.md)
+
 ## Current implementation and next design (2026-10-12)
 
-**The official, version-pinned Backlog.md v1.53.0 Windows-local dashboard is running. Private tasks have been imported locally; their contents are absent from this repository. The next design is an owner-private Vercel + Neon dashboard that can be viewed while the Windows PC is off. It has not been provisioned, deployed or migrated.** Review and merge the design first, then build and verify with synthetic data only.
+**The official, version-pinned Backlog.md v1.53.0 Windows-local dashboard is running. Private tasks have been imported locally; their contents are absent from this repository. Setup preparation is in progress for the owner-private Vercel + Neon version that can be viewed while the PC is off. The initial design is merged; the UI/API is not deployed and private data is not migrated.** The Neon resource's Free/Available state is confirmed, but its region, project connection and real DB connectivity are unverified. Build and verify access protection with synthetic data only.
 
-![Current local system and planned private cloud system](docs/images/cloud-architecture.svg)
+![Current local system and planned private cloud system](docs/images/cloud-architecture.en.svg)
 
-Start with the **[overall design and Mermaid diagrams (Japanese)](docs/12-cloud-architecture.ja.md)**. The cloud plan uses a new Kanban UI/API and Neon PostgreSQL, rather than hosting Backlog.md itself. It retains the useful status/group/owner organization but does not promise identical UI features. Vercel Authentication with All Deployments is the intended protection; owner-only access across every URL and asset/API route still requires verification. Additional Basic authentication is not adopted. There is no automatic synchronization with the old CLI/MCP store.
+Start with the **[overall design and Mermaid diagrams](docs/12-cloud-architecture.md)**. The cloud plan uses a new Kanban UI/API and Neon PostgreSQL, rather than hosting Backlog.md itself. It retains the useful status/group/owner organization but does not promise identical UI features. Vercel Authentication with All Deployments is the intended protection; owner-only access across every URL and asset/API route still requires verification. Additional Basic authentication is not adopted. There is no automatic synchronization with the old CLI/MCP store.
+
+[日本語の設計](docs/12-cloud-architecture.ja.md) / [English diagram](docs/images/cloud-architecture.en.svg) / [日本語の図](docs/images/cloud-architecture.svg).
+
+| Current: running | Planned: setup preparation |
+|---|---|
+| Official Backlog.md CLI/MCP and standard UI | New Vercel Kanban UI/API; not a host for Backlog.md itself |
+| Shared no-git Markdown; private tasks imported locally | Neon PostgreSQL as the sole canonical store; no automatic old CLI/MCP sync |
+| Owner views via loopback; PC must run | Verify owner-only Vercel Authentication with All Deployments across all URLs |
+| File watch → WebSocket → standard UI | MVP refetch every 30 seconds and after save; features and interactions are not identical |
 
 The [local MVP architecture](docs/09-backlog-md-architecture.ja.md) and [selection rationale](docs/oss-reselection-20261011.ja.md) describe the existing local implementation, which has no custom UI or REST wrapper. Cloud candidate code is separate and under review; this documentation change contains no candidate implementation.
 
@@ -24,7 +35,7 @@ node tests\integration.mjs                         # synthetic test (temp root o
 
 The data root must be outside the code repository and any git workspace (otherwise refused); existing config is never modified.
 
-The [Japanese README](README.ja.md) is the main entry point.
+The README and current overall design are available in both languages. Earlier local implementation references are in Japanese.
 
 - The priority is an end-to-end path: an AI updates a task, storage is verified, and an already-open view reflects the change. Manual transcription is not the normal update path.
 - The implementation uses Backlog.md's official CLI/MCP and standard web UI, a shared local task-data root, and one primary owner per task.
