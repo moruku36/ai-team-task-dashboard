@@ -1,14 +1,18 @@
 # AIチーム・タスクダッシュボード
 
+言語：**日本語** | [English](README.md)
+
 ## 現状と次の計画（2026-10-12）
 
-**現在は、公式Backlog.md v1.53.0を使うWindowsローカル版が稼働しています。次は、PC停止中でも本人が一覧を見られるVercel＋Neon版を設計しています。クラウドはまだ構築・deploy・実データ移送していません。** まず設計をレビュー・マージし、その後に合成データだけで構築・アクセス保護を検証します。
+**現在は、公式Backlog.md v1.53.0を使うWindowsローカル版が稼働しています。PC停止中でも本人が一覧を見られるVercel＋Neon版は導入準備中です。初版設計はマージ済みで、画面／APIは未deploy・実データ未移行です。** NeonリソースはFree／Availableを確認済みですが、地域・プロジェクト接続・実DB疎通は未確認です。構築・アクセス保護は合成データだけで検証します。
 
 ![現在のWindowsローカル版と計画中の非公開クラウド版](docs/images/cloud-architecture.svg)
 
 **[全体設計とMermaid構成図](docs/12-cloud-architecture.ja.md)** から読むと、現在と計画、認証、更新・閲覧経路、単一正本への移行、無料枠と未検証事項が分かります。
 
-| 現在：稼働済み | 計画：未構築 |
+[English design](docs/12-cloud-architecture.md)／[日本語の図](docs/images/cloud-architecture.svg)／[English diagram](docs/images/cloud-architecture.en.svg)。
+
+| 現在：稼働済み | 計画：導入準備中 |
 |---|---|
 | 公式Backlog.mdのCLI／MCP／標準Web画面 | Vercelの新しいKanban UI／API。Backlog.md自体のホストではない |
 | 共通no-git Markdownが正本。私的タスクはローカルに取り込み済み | Neon PostgreSQLを唯一の正本にする。旧CLI/MCPとの自動同期はしない |

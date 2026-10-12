@@ -46,7 +46,7 @@
   <rect x="30" y="455" width="1540" height="509" rx="20" fill="#fff" stroke="#ddd5ed"/>
   <text x="55" y="498" class="section">計画：Vercel + Neon（Backlog.md自体のホストではない）</text>
   <rect x="1390" y="474" width="140" height="37" rx="18" fill="#eee7fc"/>
-  <text x="1460" y="500" text-anchor="middle" class="small">未構築</text>
+  <text x="1460" y="500" text-anchor="middle" class="small">計画・準備</text>
   <path d="M1260 455 V733" class="g"/>
 
   <rect x="55" y="548" width="250" height="104" rx="12" class="cloud"/>

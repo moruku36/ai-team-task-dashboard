@@ -1,0 +1,90 @@
+<?xml version='1.0' encoding='utf-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1080" width="1600" height="1080" role="img" aria-labelledby="title desc">
+  <title id="title">Task dashboard: current Windows system and planned Vercel/Neon system</title>
+  <desc id="desc">Official Backlog CLI/MCP updates shared no-git Markdown, then file watch and WebSocket refresh the standard UI. The planned owner-only cloud uses Vercel Authentication with All Deployments, assets-only static output, a new Kanban UI/API and Neon PostgreSQL as the sole canonical store after migration. AI API authentication is unresolved. Verify protection and obtain transfer approval before stopping local writers and importing once.</desc>
+  <defs>
+    <marker id="blue" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0 0 L10 5 L0 10 Z" fill="#3578be" /></marker>
+    <marker id="purple" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0 0 L10 5 L0 10 Z" fill="#7660c6" /></marker>
+    <marker id="green" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0 0 L10 5 L0 10 Z" fill="#278464" /></marker>
+  </defs>
+  <style>
+    text{font-family:"Yu Gothic","Noto Sans JP",system-ui,sans-serif;fill:#172b4d}
+    .title{font-size:32px;font-weight:700}.section{font-size:25px;font-weight:700}.label{font-size:23px;font-weight:700}.small{font-size:18px}.note{font-size:20px}.muted{fill:#53657f}
+    .local{fill:#eaf3ff;stroke:#3578be;stroke-width:2}.cloud{fill:#f1edff;stroke:#7660c6;stroke-width:2}.db{fill:#e4f7ef;stroke:#278464;stroke-width:2}
+    .b{fill:none;stroke:#3578be;stroke-width:3;marker-end:url(#blue)}.p{fill:none;stroke:#7660c6;stroke-width:3;marker-end:url(#purple)}.g{fill:none;stroke:#278464;stroke-width:3;stroke-dasharray:8 7;marker-end:url(#green)}
+  </style>
+  <rect width="1600" height="1080" fill="#f7f9fc" />
+  <text x="50" y="57" class="title">Task dashboard architecture</text>
+  <text x="50" y="93" class="note muted">Private viewing while the PC is off. Public GitHub: design, code and synthetic examples only.</text>
+
+  <rect x="30" y="126" width="1540" height="277" rx="20" fill="#fff" stroke="#d2dfef" />
+  <text x="55" y="167" class="section">Current: Windows local</text>
+  <rect x="1390" y="143" width="140" height="37" rx="18" fill="#d9eefc" />
+  <text x="1460" y="169" text-anchor="middle" class="small">Running</text>
+  <rect x="55" y="211" width="280" height="108" rx="12" class="local" />
+  <text x="195" y="246" text-anchor="middle" class="label">AI → Windows CLI</text>
+  <text x="195" y="277" text-anchor="middle" class="small">Official CLI / stdio MCP</text>
+  <text x="195" y="303" text-anchor="middle" class="small">Backlog.md v1.53.0</text>
+  <path d="M335 265 H393" class="b" />
+  <rect x="400" y="211" width="320" height="108" rx="12" class="db" />
+  <text x="560" y="251" text-anchor="middle" class="label">Shared no-git Markdown</text>
+  <text x="560" y="284" text-anchor="middle" class="note">Canonical / outside code repo</text>
+  <path d="M720 265 H773" class="b" />
+  <rect x="780" y="211" width="300" height="108" rx="12" class="local" />
+  <text x="930" y="251" text-anchor="middle" class="label">file watch</text>
+  <text x="930" y="284" text-anchor="middle" class="note">ContentStore → WebSocket</text>
+  <path d="M1080 265 H1133" class="b" />
+  <rect x="1140" y="211" width="385" height="108" rx="12" class="local" />
+  <text x="1332" y="251" text-anchor="middle" class="label">Standard Backlog.md UI</text>
+  <text x="1332" y="284" text-anchor="middle" class="note">Owner views via loopback</text>
+  <text x="55" y="369" class="note muted">PC and server must run.</text>
+  <text x="780" y="369" class="note muted">Reload after disconnection to restore updates.</text>
+
+  <path d="M560 319 V420 H1260 V733" class="g" />
+  <rect x="650" y="405" width="590" height="38" rx="12" fill="#f7f9fc" />
+  <text x="945" y="431" text-anchor="middle" class="small" fill="#278464">Verify protection → approve transfer → stop writers → one import</text>
+
+  <rect x="30" y="455" width="1540" height="509" rx="20" fill="#fff" stroke="#ddd5ed" />
+  <text x="55" y="498" class="section">Planned: Vercel + Neon (not hosting Backlog.md itself)</text>
+  <rect x="1390" y="474" width="140" height="37" rx="18" fill="#eee7fc" />
+  <text x="1460" y="500" text-anchor="middle" class="small">Planned</text>
+  <path d="M1260 455 V733" class="g" />
+
+  <rect x="55" y="548" width="250" height="104" rx="12" class="cloud" />
+  <text x="180" y="589" text-anchor="middle" class="label">Owner browser</text>
+  <text x="180" y="621" text-anchor="middle" class="note">View while the PC is off</text>
+  <path d="M305 600 H353" class="p" />
+  <rect x="360" y="538" width="340" height="133" rx="12" class="cloud" />
+  <text x="530" y="576" text-anchor="middle" class="label">Vercel Authentication</text>
+  <text x="530" y="609" text-anchor="middle" class="note">All Deployments / owner-only</text>
+  <text x="530" y="641" text-anchor="middle" class="small">Verify all URL / asset / API denial</text>
+  <path d="M700 600 H753" class="p" />
+
+  <rect x="760" y="538" width="340" height="133" rx="12" class="cloud" />
+  <text x="930" y="576" text-anchor="middle" class="label">Static serving → new UI</text>
+  <text x="930" y="609" text-anchor="middle" class="note">Protect filesystem-first routes</text>
+  <text x="930" y="641" text-anchor="middle" class="small">Explicit assets-only output</text>
+  <path d="M530 671 V746 H753" class="p" />
+  <text x="588" y="731" class="small">API protection</text>
+  <path d="M930 671 V692" class="p" />
+  <text x="947" y="692" class="small">Same-origin reads / updates</text>
+  <rect x="760" y="701" width="340" height="133" rx="12" class="cloud" />
+  <text x="930" y="739" text-anchor="middle" class="label">Vercel Node API</text>
+  <text x="930" y="772" text-anchor="middle" class="note">Version / transaction / request ID</text>
+  <text x="930" y="804" text-anchor="middle" class="small">Refetch every 30s and after saving</text>
+  <path d="M1100 758 H1153" class="p" />
+  <path d="M1160 792 H1107" class="p" />
+  <rect x="1160" y="741" width="365" height="128" rx="12" class="db" />
+  <text x="1342" y="782" text-anchor="middle" class="label">Neon PostgreSQL</text>
+  <text x="1342" y="816" text-anchor="middle" class="note">Sole canonical store after migration</text>
+  <text x="1342" y="846" text-anchor="middle" class="small">Real DB / TLS / concurrency unverified</text>
+
+  <rect x="55" y="755" width="430" height="100" rx="12" class="cloud" />
+  <text x="270" y="793" text-anchor="middle" class="label">AI → Windows delegation CLI</text>
+  <text x="270" y="826" text-anchor="middle" class="note">API authentication path unresolved</text>
+  <path d="M485 794 H530 V678" class="p" stroke-dasharray="8 7" />
+  <text x="55" y="923" class="note muted">No source, documents or secrets in static output. No automatic old CLI/MCP sync.</text>
+
+  <text x="50" y="1008" class="note">Before migration: design review → synthetic build/protection tests → separate private-data approval</text>
+  <text x="50" y="1047" class="small muted">Blue: current path · Purple: cloud design · Green dashes: approved migration · Purple dashes: unresolved authentication</text>
+</svg>
