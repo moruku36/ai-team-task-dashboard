@@ -3,8 +3,20 @@ const names = ['未着手', '進行中', '承認待ち', '中断・保留', '検
 const groups = ['現行', '要棚卸し', '完了履歴'];
 let snapshot = { tasks: [] }, group = '現行', online = false, selected, busy = false;
 const pendingRequests = new Map();
+const acknowledgedVersions = new Map();
 let readGeneration = 0;
-const validTime = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/.test(value) && Number.isFinite(Date.parse(value));
+let detailGeneration = 0, selectedStale = false;
+const taskFields = ['id', 'title', 'owner', 'status', 'group', 'detail', 'lastConfirmedAt'];
+const sameTask = (a, b, metadata = true) => [...taskFields, ...(metadata ? ['version', 'updatedAt'] : [])].every(key => a[key] === b[key]);
+const validTime = value => {
+  if (typeof value !== 'string') return false;
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.exec(value);
+  if (!match) return false;
+  const [year, month, day, hour, minute, second] = match.slice(1).map(Number);
+  const days = [31, year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  const ms = Date.parse(value), parsed = new Date(ms);
+  return year >= 1 && month >= 1 && month <= 12 && day >= 1 && day <= days[month - 1] && hour <= 23 && minute <= 59 && second <= 59 && Number.isFinite(ms) && parsed.getUTCFullYear() >= 1 && parsed.getUTCFullYear() <= 9999;
+};
 const validTask = task => task && typeof task === 'object' && !Array.isArray(task) &&
   typeof task.id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(task.id) &&
   typeof task.title === 'string' && task.title.trim() && task.title.length <= 300 &&
@@ -16,7 +28,23 @@ const validTask = task => task && typeof task === 'object' && !Array.isArray(tas
 function validSnapshot(value) {
   return value && Number.isSafeInteger(value.revision) && value.revision >= 0 &&
     validTime(value.observedAt) && Array.isArray(value.tasks) && value.tasks.length <= 1000 &&
-    value.tasks.every(validTask) && new Set(value.tasks.map(task => task.id)).size === value.tasks.length;
+    Math.abs(Date.now() - Date.parse(value.observedAt)) <= 60000 &&
+    value.tasks.every(task => validTask(task) && task.version <= value.revision) && new Set(value.tasks.map(task => task.id)).size === value.tasks.length;
+}
+function advancesSnapshot(next) {
+  const incoming = new Map(next.tasks.map(task => [task.id, task]));
+  if ([...acknowledgedVersions].some(([id, version]) => !incoming.has(id) || incoming.get(id).version < version)) return false;
+  if (snapshot.revision === undefined) return true;
+  if (next.revision < snapshot.revision || Date.parse(next.observedAt) < Date.parse(snapshot.observedAt)) return false;
+  const previous = new Map(snapshot.tasks.map(task => [task.id, task]));
+  if (next.revision === snapshot.revision && next.tasks.length !== previous.size) return false;
+  return next.tasks.every(task => {
+    const old = previous.get(task.id);
+    if (next.revision === snapshot.revision) return old && sameTask(task, old);
+    const delta = next.revision - snapshot.revision;
+    if (!old) return task.version <= delta;
+    return task.version >= old.version && task.version - old.version <= delta && (task.version !== old.version || sameTask(task, old));
+  });
 }
 const el = id => document.getElementById(id);
 const time = value => value ? new Date(value).toLocaleString('ja-JP') : '未記録';
@@ -37,7 +65,7 @@ function render() {
       if (pendingRequests.has(task.id)) card.append(node('small', '保存結果が未確認'));
       card.onclick = () => {
         if (busy) return;
-        selected = task; const pending = pendingRequests.get(task.id);
+        ++detailGeneration; selected = task; selectedStale = false; const pending = pendingRequests.get(task.id);
         el('detailTitle').textContent = task.title;
         el('detailBody').textContent = `${task.id} / 主担当: ${task.owner}\n更新: ${time(task.updatedAt)} / 確認: ${time(task.lastConfirmedAt)}\n\n${task.detail}`;
         el('status').value = pending?.task.status ?? task.status; el('status').disabled = Boolean(pending);
@@ -55,21 +83,28 @@ async function refresh() {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const next = await response.json();
     if (generation !== readGeneration || busy) return;
-    if (!validSnapshot(next) || next.revision < (snapshot.revision ?? 0)) throw new Error('Invalid or older snapshot');
+    if (!validSnapshot(next) || !advancesSnapshot(next)) throw new Error('Invalid or older snapshot');
     snapshot = next; online = true;
     el('connection').textContent = '接続中'; el('times').textContent = `最終取得: ${time(snapshot.observedAt)} · 30秒ごとに確認`;
     el('notice').textContent = ''; render();
+    if (selected && !pendingRequests.has(selected.id)) {
+      const current = snapshot.tasks.find(task => task.id === selected.id);
+      selectedStale = !current || !sameTask(current, selected);
+      if (selectedStale) el('saveNotice').textContent = '詳細を開いた後に更新されました。閉じて最新のカードを開き直してください。';
+    }
   } catch {
     if (generation !== readGeneration || busy) return;
     online = false; el('connection').textContent = '接続できません'; el('notice').textContent = '表示は最後に取得した状態です。更新ボタンで再接続できます。';
   }
-  el('save').disabled = busy || !online || !selected;
+  el('save').disabled = busy || !online || !selected || selectedStale;
 }
+el('detail').onclose = () => { ++detailGeneration; selected = undefined; selectedStale = false; el('save').disabled = true; };
 el('status').append(...states.map((s, i) => { const option = node('option', names[i]); option.value = s; return option; }));
 el('search').oninput = render; el('refresh').onclick = refresh;
 el('status').onchange = () => { const pending = selected && pendingRequests.get(selected.id); if (pending) el('status').value = pending.task.status; };
 el('save').onclick = async () => {
-  if (!selected || busy || !online) return;
+  if (!selected || selectedStale || busy || !online) return;
+  const generation = detailGeneration;
   const taskId = selected.id;
   const request = pendingRequests.get(taskId) ?? { requestId: crypto.randomUUID(), expectedVersion: selected.version,
     task: { id: selected.id, title: selected.title, owner: selected.owner, group: selected.group, detail: selected.detail,
@@ -79,14 +114,19 @@ el('save').onclick = async () => {
   busy = true; el('save').disabled = true; el('status').disabled = true;
   try {
     const response = await fetch('/api/tasks', { method: 'POST', credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(15000), headers: { 'Content-Type': 'application/json', 'X-Dashboard-Write': '1' }, body: JSON.stringify(request) });
-    if (response.status === 409) { pendingRequests.delete(taskId); el('saveNotice').textContent = '別の更新がありました。詳細を閉じて、最新のカードを開き直してください。'; selected = undefined; }
+    if (response.status === 409) {
+      pendingRequests.delete(taskId);
+      if (generation === detailGeneration) { el('saveNotice').textContent = '別の更新がありました。詳細を閉じて、最新のカードを開き直してください。'; selected = undefined; }
+    }
     else {
       if (!response.ok) throw new Error(); const saved = await response.json();
-      if (!validTask(saved) || saved.id !== taskId || saved.version !== request.expectedVersion + 1) throw new Error('Unconfirmed acknowledgement');
-      selected = saved; pendingRequests.delete(taskId); el('status').disabled = false; el('saveNotice').textContent = '保存しました';
+      if (!validTask(saved) || !sameTask(saved, request.task, false) || saved.version !== request.expectedVersion + 1) throw new Error('Unconfirmed acknowledgement');
+      pendingRequests.delete(taskId);
+      acknowledgedVersions.set(taskId, Math.max(acknowledgedVersions.get(taskId) ?? 0, saved.version));
+      if (generation === detailGeneration) { selected = saved; el('status').disabled = false; el('saveNotice').textContent = '保存しました'; }
     }
-  } catch { el('saveNotice').textContent = '保存結果が未確認です。状態を変えずに保存を再度押すと、同じ要求を再送します。'; }
-  finally { busy = false; el('save').disabled = !online || !selected; await refresh(); }
+  } catch { if (generation === detailGeneration) el('saveNotice').textContent = '保存結果が未確認です。状態を変えずに保存を再度押すと、同じ要求を再送します。'; }
+  finally { busy = false; el('save').disabled = !online || !selected || selectedStale; await refresh(); }
 };
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
 render(); refresh(); setInterval(refresh, 30000);

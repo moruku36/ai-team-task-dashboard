@@ -3,6 +3,10 @@ import { resolve, join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 export const assets = ['index.html', 'app.js', 'style.css'];
 export async function build(root = resolve(dirname(fileURLToPath(import.meta.url)), '..')) {
+  for (const directory of [root, join(root, 'cloud'), join(root, 'cloud', 'public')]) {
+    const info = await lstat(directory);
+    if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('Linked or non-directory source refused');
+  }
   const dist = join(root, 'dist'), output = join(dist, 'public');
   for (const path of [dist, output]) {
     try { if ((await lstat(path)).isSymbolicLink()) throw new Error('Linked output refused'); }

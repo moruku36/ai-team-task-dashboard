@@ -1,7 +1,7 @@
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
-import { mutate, Problem } from './model.mjs';
+import { mutate, Problem, publicSnapshot } from './model.mjs';
 import { connectStore } from './postgres.mjs';
 import { SyntheticStore } from './synthetic.mjs';
 const assets = new Map([['/', ['index.html', 'text/html; charset=utf-8']], ['/app.js', ['app.js', 'text/javascript; charset=utf-8']], ['/style.css', ['style.css', 'text/css; charset=utf-8']]]);
@@ -29,8 +29,8 @@ export function handler({ store, env = process.env }) {
         res.writeHead(200, { 'Content-Type': type }); return res.end(content);
       }
       if (req.method === 'GET' && url.pathname === '/api/tasks') {
-        const board = await store.read();
-        return json(200, { revision: board.revision, tasks: board.tasks, observedAt: new Date().toISOString() });
+        try { return json(200, publicSnapshot(await store.read())); }
+        catch { return json(503, { error: 'Storage unavailable; refresh or retry the same request ID' }); }
       }
       if (req.method === 'POST' && url.pathname === '/api/tasks') {
         if (req.headers['x-dashboard-write'] !== '1' || typeof req.headers['content-type'] !== 'string' || req.headers['content-type'].split(';')[0] !== 'application/json') throw new Problem(403, 'Write header and JSON required');
@@ -65,7 +65,7 @@ export function createVercelHandler({ connect = connectStore, env = process.env 
   };
 }
 export default createVercelHandler();
-export async function startLocalServer(port = Number(process.env.PORT ?? 6421)) {
+export async function startLocalServer(port = Number(process.env.PORT ?? 6422)) {
   if (!Number.isSafeInteger(port) || port < 0 || port > 65535) throw new Error('Invalid local port');
   // DATABASE_URL and deployment flags are never used by the local entry point.
   const env = {}, server = createServer(handler({ store: new SyntheticStore(), env }));

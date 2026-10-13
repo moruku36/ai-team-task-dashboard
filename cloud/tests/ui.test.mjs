@@ -83,7 +83,7 @@ test('refresh ordering, malformed snapshots and revision rollback keep last vali
   const el = id => { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id); };
   const context = createContext({ document: { hidden: false, getElementById: el, createElement: () => new Element(), addEventListener() {} },
     crypto: { randomUUID }, AbortSignal, setInterval() {}, fetch: () => new Promise((resolve, reject) => reads.push({ resolve, reject })) });
-  const snapshot = (revision, title) => ({ revision, observedAt: '2026-10-13T00:00:00.000Z', tasks: [{ id: 'ORDER-SYNTH', title, owner: 'synthetic-agent', group: '現行', status: 'To Do', detail: '', lastConfirmedAt: null, version: revision, updatedAt: '2026-10-13T00:00:00.000Z' }] });
+  const snapshot = (revision, title) => ({ revision, observedAt: new Date().toISOString(), tasks: [{ id: 'ORDER-SYNTH', title, owner: 'synthetic-agent', group: '現行', status: 'To Do', detail: '', lastConfirmedAt: null, version: revision, updatedAt: '2026-10-13T00:00:00.000Z' }] });
   const ok = value => ({ ok: true, json: async () => value });
   runInContext(await readFile(new URL('../public/app.js', import.meta.url), 'utf8'), context);
   reads[0].resolve(ok(snapshot(1, 'initial'))); await new Promise(setImmediate);
@@ -127,4 +127,72 @@ test('malformed success ACK remains pending and retries exactly once with unchan
     card().onclick(); await el('save').onclick();
     assert.deepEqual(requests[1], requests[0]); assert.equal(runInContext('pendingRequests.size', context), 0); assert.equal((await store.read()).revision, revision);
   } finally { await a.close(); }
+});
+
+
+test('well-shaped wrong ACK does not clear pending; stale detail cannot submit a new write',async()=>{
+  const store=new FixtureStore(),a=await app(store),elements=new Map(),requests=[];let wrongAck=true;
+  const el=id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id);};
+  try{
+    const input={id:'CONTENT-ACK',title:'合成要求一致',owner:'synthetic-agent',group:'現行',status:'To Do',detail:'original',lastConfirmedAt:null};await mutate(store,{requestId:'content-seed',expectedVersion:0,task:input});
+    const context=createContext({document:{hidden:false,getElementById:el,createElement:()=>new Element(),addEventListener(){}},crypto:{randomUUID},AbortSignal,setInterval(){},fetch:async(path,options)=>{
+      if(options?.method==='POST')requests.push(JSON.parse(options.body));
+      const response=await fetch(a.url+path,{...options,headers:{...options?.headers,Origin:'http://synthetic.invalid'}});
+      if(options?.method==='POST'&&response.ok&&wrongAck){wrongAck=false;const saved=await response.json();return{ok:true,status:200,json:async()=>({...saved,status:'Done'})};}return response;
+    }});
+    runInContext(await readFile(new URL('../public/app.js',import.meta.url),'utf8'),context);await runInContext('refresh()',context);
+    const card=()=>el('board').children.flatMap(c=>c.children).find(c=>c.children?.[0]?.textContent==='CONTENT-ACK');
+    card().onclick();el('status').value='In Progress';await el('save').onclick();assert.equal(runInContext('pendingRequests.size',context),1);
+    card().onclick();await el('save').onclick();assert.equal(runInContext('pendingRequests.size',context),0);assert.deepEqual(requests[1],requests[0]);
+    card().onclick();await mutate(store,{requestId:'other-update',expectedVersion:2,task:{...input,status:'Blocked',detail:'other agent'}});await runInContext('refresh()',context);
+    assert.equal(el('save').disabled,true);assert.match(el('saveNotice').textContent,/開き直して/);const count=requests.length;await el('save').onclick();assert.equal(requests.length,count);
+  }finally{await a.close();}
+});
+
+test('closing during save and double operations cannot revive selection or cancel a committed write',async()=>{
+  const store=new FixtureStore(),a=await app(store),elements=new Map();let release,postCount=0;
+  const el=id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id);};
+  try{
+    const input={id:'CLOSE-A',title:'合成取消境界',owner:'synthetic-agent',group:'現行',status:'To Do',detail:'',lastConfirmedAt:null};
+    await mutate(store,{requestId:'close-seed-a',expectedVersion:0,task:input});await mutate(store,{requestId:'close-seed-b',expectedVersion:0,task:{...input,id:'CLOSE-B'}});
+    const context=createContext({document:{hidden:false,getElementById:el,createElement:()=>new Element(),addEventListener(){}},crypto:{randomUUID},AbortSignal,setInterval(){},fetch:async(path,options)=>{
+      const response=await fetch(a.url+path,{...options,headers:{...options?.headers,Origin:'http://synthetic.invalid'}});
+      if(options?.method==='POST'){postCount++;await new Promise(resolve=>{release=resolve;});}return response;
+    }});
+    runInContext(await readFile(new URL('../public/app.js',import.meta.url),'utf8'),context);await runInContext('refresh()',context);
+    const card=id=>el('board').children.flatMap(c=>c.children).find(c=>c.children?.[0]?.textContent===id);
+    card('CLOSE-A').onclick();el('status').value='In Progress';const saving=el('save').onclick();
+    while(!release)await new Promise(setImmediate);
+    await el('save').onclick();card('CLOSE-B').onclick();assert.equal(runInContext('selected.id',context),'CLOSE-A');
+    el('detail').onclose();assert.equal(runInContext('selected',context),undefined);release();await saving;
+    assert.equal(postCount,1);assert.equal(runInContext('selected',context),undefined);assert.equal(el('save').disabled,true);assert.equal(runInContext('pendingRequests.size',context),0);
+    assert.equal((await store.read()).tasks.find(task=>task.id==='CLOSE-A').status,'In Progress');
+    card('CLOSE-B').onclick();el('detail').onclose();await el('save').onclick();assert.equal(postCount,1);
+  }finally{await a.close();}
+});
+
+test('snapshot coherence and timestamp age reject fabricated freshness and version regression',async()=>{
+  const elements=new Map(),reads=[];const el=id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id);};
+  const context=createContext({document:{hidden:false,getElementById:el,createElement:()=>new Element(),addEventListener(){}},crypto:{randomUUID},AbortSignal,setInterval(){},fetch:()=>new Promise(resolve=>reads.push(resolve))});
+  const task={id:'COHERENT',title:'合成版',owner:'synthetic-agent',group:'現行',status:'To Do',detail:'',lastConfirmedAt:null,version:2,updatedAt:new Date().toISOString()};
+  const board={revision:5,observedAt:new Date().toISOString(),tasks:[task]};const ok=value=>({ok:true,json:async()=>value});
+  runInContext(await readFile(new URL('../public/app.js',import.meta.url),'utf8'),context);reads[0](ok(board));await new Promise(setImmediate);
+  const cases=[{...board,revision:6,tasks:[{...task,version:1}]},{...board,tasks:[{...task,title:'same revision changed'}]},{...board,tasks:[{...task,version:3}]},{...board,revision:6,tasks:[{...task,version:4}]},{...board,revision:6,tasks:[{...task,version:7}]},{...board,observedAt:new Date(Date.now()-120000).toISOString()},{...board,observedAt:new Date(Date.now()+120000).toISOString()},{...board,tasks:[{...task,updatedAt:'2026-02-30T00:00:00Z'}]}];
+  for(const candidate of cases){const request=runInContext('refresh()',context);reads.at(-1)(ok(candidate));await request;assert.equal(runInContext('online',context),false);assert.equal(runInContext('snapshot.tasks[0].title',context),'合成版');assert.equal(runInContext('snapshot.tasks[0].version',context),2);}
+});
+
+test('successful write ACK sets a floor that a post-write stale GET cannot roll back',async()=>{
+  const store=new FixtureStore(),a=await app(store),elements=new Map();let oldRead,serveOld=false;
+  const el=id=>{if(!elements.has(id))elements.set(id,new Element());return elements.get(id);};
+  try{
+    const input={id:'ACK-FLOOR',title:'合成確認版',owner:'synthetic-agent',group:'現行',status:'To Do',detail:'',lastConfirmedAt:null};await mutate(store,{requestId:'ack-floor-seed',expectedVersion:0,task:input});
+    const context=createContext({document:{hidden:false,getElementById:el,createElement:()=>new Element(),addEventListener(){}},crypto:{randomUUID},AbortSignal,setInterval(){},fetch:async(path,options)=>{
+      if(options?.method!=='POST'&&serveOld)return{ok:true,json:async()=>({...oldRead,observedAt:new Date().toISOString()})};
+      const response=await fetch(a.url+path,{...options,headers:{...options?.headers,Origin:'http://synthetic.invalid'}});if(options?.method==='POST')serveOld=true;return response;
+    }});
+    runInContext(await readFile(new URL('../public/app.js',import.meta.url),'utf8'),context);await runInContext('refresh()',context);oldRead=JSON.parse(runInContext('JSON.stringify(snapshot)',context));
+    el('board').children.flatMap(c=>c.children).find(c=>c.children?.[0]?.textContent==='ACK-FLOOR').onclick();el('status').value='In Progress';await el('save').onclick();
+    assert.equal(runInContext('online',context),false);assert.equal(runInContext('acknowledgedVersions.get("ACK-FLOOR")',context),2);assert.equal(el('save').disabled,true);assert.match(el('notice').textContent,/最後に取得/);
+    serveOld=false;await runInContext('refresh()',context);assert.equal(runInContext('online',context),true);assert.equal(runInContext('snapshot.tasks[0].version',context),2);
+  }finally{await a.close();}
 });

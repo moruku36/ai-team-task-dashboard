@@ -124,3 +124,17 @@ test('platform-preparsed JSON/rewrite and split UTF-8 with strict Origin', async
   req.body = { oversized: 'x'.repeat(20001) };
   await handler({ store, env })(req, res); assert.equal(code, 413);
 });
+
+test('wire DTO filters storage extensions; invalid board/receipt/date fail without secrets',async t=>{
+  const store=new FixtureStore(),a=await app(store);t.after(()=>a.close());
+  const request=command(0,'To Do','filtered-receipt');assert.equal((await a.post(request)).status,200);
+  store.state.secret='SYNTHETIC_PRIVATE_FIELD';store.state.tasks[0].credential='SYNTHETIC_PRIVATE_FIELD';store.state.receipts[request.requestId].result.token='SYNTHETIC_PRIVATE_FIELD';
+  for(const response of [await a.get('/api/tasks'),await a.post(request)]){assert.equal(response.status,200);assert.doesNotMatch(await response.text(),/SYNTHETIC_PRIVATE_FIELD|credential|token|secret/);}
+  store.state.receipts[request.requestId].result={...store.state.receipts[request.requestId].result,status:'Done'};
+  const corruptAck=await a.post(request);assert.equal(corruptAck.status,503);assert.doesNotMatch(await corruptAck.text(),/SYNTHETIC_PRIVATE_FIELD/);
+  for(const invalid of [{revision:0},{revision:1,tasks:[store.state.tasks[0],store.state.tasks[0]]},{revision:1,tasks:[{...store.state.tasks[0],owner:['a','b']}]},{revision:1,tasks:[{...store.state.tasks[0],updatedAt:'2026-02-30T00:00:00Z'}]}]){
+    const bad=await app({read:async()=>({...store.state,...invalid})});try{const response=await bad.get('/api/tasks');assert.equal(response.status,503);assert.doesNotMatch(await response.text(),/SYNTHETIC_PRIVATE_FIELD|credential|token/);}finally{await bad.close();}
+  }
+  for(const stamp of ['2026-10-13','2026-10-13T10:00:00','2026-02-30T00:00:00Z','9999-12-31T23:59:59-23:59'])assert.equal((await a.post({...command(1,'Done','invalid-date'),task:{...task,lastConfirmedAt:stamp}})).status,400);
+  const normalized=await a.post({...command(1,'Done','valid-zone-date'),task:{...task,lastConfirmedAt:'2026-10-13T09:00:00+09:00'}});assert.equal(normalized.status,200);assert.equal((await normalized.json()).lastConfirmedAt,'2026-10-13T00:00:00.000Z');
+});

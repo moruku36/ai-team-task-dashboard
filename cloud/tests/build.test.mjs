@@ -16,3 +16,12 @@ test('static output contains only three allowlisted assets; unexpected files fai
   assert.equal(config.outputDirectory, 'dist/public'); assert.equal(config.buildCommand, 'node cloud/build.mjs');
   assert.deepEqual(config.rewrites.map(r => r.source), ['/api/tasks']);
 });
+
+test('linked source parent is refused before an asset can cross the build boundary',async t=>{
+  const root=await mkdtemp(join(tmpdir(),'dashboard-linked-parent-'));t.after(()=>rm(root,{recursive:true,force:true}));
+  const source=join(root,'cloud'),external=join(root,'outside');await mkdir(join(external,'public'),{recursive:true});
+  for(const name of assets)await writeFile(join(external,'public',name),'SYNTHETIC_PRIVATE_FIELD');
+  const {symlink}=await import('node:fs/promises');await symlink(external,source,process.platform==='win32'?'junction':'dir');
+  await assert.rejects(build(root),/Linked or non-directory source refused/);
+  await assert.rejects(readFile(join(root,'dist','public','index.html')),e=>e.code==='ENOENT');
+});
