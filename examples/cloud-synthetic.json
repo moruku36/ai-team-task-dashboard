@@ -1,0 +1,5 @@
+[
+  { "id": "SYNTH-1", "title": "合成タスク: 調査", "owner": "synthetic-agent", "status": "In Progress", "group": "現行", "detail": "公開可能なテストデータのみ", "lastConfirmedAt": null },
+  { "id": "SYNTH-2", "title": "合成タスク: 承認", "owner": "synthetic-agent", "status": "Awaiting Approval", "group": "現行", "detail": "本人の確認待ち", "lastConfirmedAt": null },
+  { "id": "SYNTH-3", "title": "合成タスク: 完了", "owner": "synthetic-agent", "status": "Done", "group": "完了履歴", "detail": "実在する仕事ではありません", "lastConfirmedAt": null }
+]

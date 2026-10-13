@@ -1,0 +1,4 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI Team · タスク</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
+<body><header><div><small>AI TEAM</small><h1>タスクダッシュボード</h1><p>担当と進捗をひと目で確認</p></div><span id="connection" role="status">接続確認中…</span></header>
+<main><nav aria-label="表示グループ" id="groups"></nav><section class="toolbar"><label>タスクを検索 <input id="search" type="search" placeholder="タイトル・担当・詳細"></label><button id="refresh">更新</button><span id="times"></span></section><p id="notice" role="alert"></p><div id="board"></div><dialog id="detail"><form method="dialog"><button class="close">閉じる</button></form><h2 id="detailTitle"></h2><pre id="detailBody"></pre><label>状態 <select id="status"></select></label><button id="save">状態を保存</button><p id="saveNotice" role="status"></p></dialog></main></body></html>

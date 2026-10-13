@@ -1,0 +1,8 @@
+{
+  "name": "ai-team-task-dashboard",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": { "build": "node cloud/build.mjs", "start": "node cloud/server.mjs", "test": "node --test cloud/tests/*.test.mjs" },
+  "dependencies": { "pg": "8.23.1" }
+}
