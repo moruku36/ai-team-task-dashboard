@@ -20,7 +20,7 @@ export function deploymentPreflight(root = resolve(dirname(fileURLToPath(import.
   const json = name => { const text = file(name); if (text === null) return null; try { return JSON.parse(text); } catch { fail(`invalid_json:${name}`); return null; } };
   const manifest = json('package.json'), lock = json('package-lock.json');
   if (!/^\d+\.\d+\.\d+$/.test(manifest?.dependencies?.pg ?? '')) fail('pg_must_have_exact_root_version');
-  for (const name of ['api/index.mjs','cloud/server.mjs','cloud/postgres.mjs','cloud/model.mjs','cloud/synthetic.mjs']) file(name);
+  for (const name of ['api/index.mjs','cloud/server.mjs','cloud/postgres.mjs','cloud/model.mjs','cloud/synthetic.mjs','cloud/auth.mjs','cloud/quota.mjs','cloud/quota-freshness.mjs']) file(name);
   if (lock) {
     if (lock.lockfileVersion !== 3 || !lock.packages || typeof lock.packages !== 'object') fail('unsupported_lockfile');
     if (lock.packages?.['']?.dependencies?.pg !== manifest?.dependencies?.pg || lock.packages?.['node_modules/pg']?.version !== manifest?.dependencies?.pg) fail('root_pg_lock_mismatch');

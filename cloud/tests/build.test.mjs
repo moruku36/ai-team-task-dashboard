@@ -14,7 +14,7 @@ test('static output contains only three allowlisted assets; unexpected files fai
   await writeFile(join(output, 'README.md'), 'unexpected'); await assert.rejects(build(root), /Unexpected public output/);
   const config = JSON.parse(await readFile(new URL('../../vercel.json', import.meta.url), 'utf8'));
   assert.equal(config.outputDirectory, 'dist/public'); assert.equal(config.buildCommand, 'node cloud/build-deployment.mjs');
-  assert.deepEqual(config.rewrites.map(r => r.source), ['/api/tasks']);
+  assert.deepEqual(config.rewrites.map(r => r.source), ['/api/tasks', '/api/quota']);
 });
 
 test('linked source parent is refused before an asset can cross the build boundary',async t=>{

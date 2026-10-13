@@ -128,5 +128,40 @@ el('save').onclick = async () => {
   } catch { if (generation === detailGeneration) el('saveNotice').textContent = '保存結果が未確認です。状態を変えずに保存を再度押すと、同じ要求を再送します。'; }
   finally { busy = false; el('save').disabled = !online || !selected || selectedStale; await refresh(); }
 };
-document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
-render(); refresh(); setInterval(refresh, 30000);
+// Quota summary. Freshness is decided by the server only (single TTL definition); this code just displays it and never upgrades it.
+const quotaProviders = { codex: 'Codex', claude: 'Claude', ag: 'AG' };
+const quotaFreshness = { current: '最新', stale: '古い可能性', reference: '参考値', unknown: '不明' };
+const quotaResets = ['none', 'pending', 'awaiting_refresh', 'invalid'];
+const nullableTime = value => value === null || validTime(value);
+const validQuotaEntry = entry => entry && typeof entry === 'object' && Object.hasOwn(quotaProviders, entry.provider) && Object.hasOwn(quotaFreshness, entry.freshness) &&
+  quotaResets.includes(entry.resetState) && ['observedAt', 'collectedAt', 'lastSuccessAt', 'resetAt'].every(key => nullableTime(entry[key])) &&
+  (entry.usedPercent === null || typeof entry.usedPercent === 'number');
+function validQuota(value) {
+  return value && validTime(value.servedAt) && Math.abs(Date.now() - Date.parse(value.servedAt)) <= 60000 &&
+    Array.isArray(value.entries) && value.entries.length <= 6 && value.entries.every(validQuotaEntry);
+}
+function renderQuota(quota) {
+  const items = quota.entries.map(entry => {
+    const item = node('div', '', `quota-item ${entry.freshness}`);
+    const percent = entry.usedPercent === null ? (entry.lastKnown ? `前回値(参考) ${entry.lastKnown.usedPercent}%` : '使用率: 不明') : `${entry.freshness === 'current' ? '使用率' : '使用率(参考)'}: ${entry.usedPercent}%`;
+    item.append(node('h3', `${quotaProviders[entry.provider]} · ${quotaFreshness[entry.freshness]}`), node('small', percent),
+      node('small', `観測: ${time(entry.observedAt)}`), node('small', `収集: ${time(entry.collectedAt)}`), node('small', `最終成功: ${time(entry.lastSuccessAt)}`),
+      node('small', `リセット: ${time(entry.resetAt)}${entry.resetState === 'awaiting_refresh' ? ' (更新待ち)' : ''}`));
+    if (entry.state !== 'ok') item.append(node('small', '取得状態: 失敗・曖昧・欠測のいずれか'));
+    return item;
+  });
+  items.push(node('small', `配信: ${time(quota.servedAt)}`));
+  el('quota').replaceChildren(...(quota.entries.length ? items : [node('p', 'クォータ情報は未接続です(不明)'), items.at(-1)]));
+}
+async function refreshQuota() {
+  try {
+    const response = await fetch('/api/quota', { cache: 'no-store', credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(15000) });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const next = await response.json();
+    if (!validQuota(next)) throw new Error('Invalid quota');
+    renderQuota(next);
+  } catch { el('quota').replaceChildren(node('p', 'クォータ情報を取得できません(不明)')); }
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { refresh(); refreshQuota(); } });
+render(); refresh(); setInterval(refresh, 30000); setInterval(refreshQuota, 30000);
+if (typeof setTimeout === 'function') setTimeout(refreshQuota, 0);

@@ -8,6 +8,7 @@ import { handler, createVercelHandler, startLocalServer } from '../server.mjs';
 import { emptyBoard, mutate } from '../model.mjs';
 import { PostgresStore } from '../postgres.mjs';
 import { app, FixtureStore, command, task, env } from './fixtures.mjs';
+import { syntheticOwnerAuthorize } from './synthetic-auth.mjs'; // test-only injected callback
 test('HTTP lifecycle, idempotency, concurrency and file-fixture restart', async t => {
   const dir = await mkdtemp(join(tmpdir(), 'dashboard-synthetic-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
@@ -86,7 +87,7 @@ test('Vercel entry connects store normally; missing config and connection failur
   }
   const configuration = { DATABASE_URL: 'postgresql://synthetic.invalid/test', DASHBOARD_ORIGIN: 'https://synthetic.invalid' };
   const store = new FixtureStore(); let calls = 0;
-  const server = createServer(createVercelHandler({ env: configuration, connect: async supplied => { assert.equal(supplied, configuration); calls++; if (calls === 1) throw new Error('SECRET_SENTINEL'); return store; } }));
+  const server = createServer(createVercelHandler({ env: configuration, authorize: syntheticOwnerAuthorize, connect: async supplied => { assert.equal(supplied, configuration); calls++; if (calls === 1) throw new Error('SECRET_SENTINEL'); return store; } }));
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); t.after(() => new Promise(resolve => server.close(resolve)));
   const base = `http://127.0.0.1:${server.address().port}`;
   const failed = await fetch(base + '/api/tasks'); assert.equal(failed.status, 503); assert.doesNotMatch(await failed.text(), /SECRET_SENTINEL/);
@@ -95,11 +96,11 @@ test('Vercel entry connects store normally; missing config and connection failur
   assert.equal(calls, 2); assert.equal((await store.read()).revision, 1);
 });
 test('local entry uses ephemeral synthetic store on loopback only', async t => {
-  const first = await startLocalServer(0); t.after(() => new Promise(resolve => first.close(resolve)));
+  const first = await startLocalServer(0, { authorize: syntheticOwnerAuthorize }); t.after(() => new Promise(resolve => first.close(resolve)));
   assert.equal(first.address().address, '127.0.0.1'); const base = `http://127.0.0.1:${first.address().port}`;
   const headers = { Origin: base, 'Content-Type': 'application/json', 'X-Dashboard-Write': '1' };
   assert.equal((await fetch(base + '/api/tasks', { method: 'POST', headers, body: JSON.stringify(command(0, 'To Do', 'local-synthetic')) })).status, 200);
-  const second = await startLocalServer(0); t.after(() => new Promise(resolve => second.close(resolve)));
+  const second = await startLocalServer(0, { authorize: syntheticOwnerAuthorize }); t.after(() => new Promise(resolve => second.close(resolve)));
   assert.equal((await (await fetch(`http://127.0.0.1:${second.address().port}/api/tasks`)).json()).tasks.length, 0);
 });
 test('Postgres same-client commit and rollback; simulated commit failure', async () => {
@@ -115,14 +116,15 @@ test('platform-preparsed JSON/rewrite and split UTF-8 with strict Origin', async
   const store = new FixtureStore(); let code, body;
   const req = { method: 'POST', url: '/api/index?dashboard_path=api/tasks', query: { dashboard_path: 'api/tasks' }, headers: { origin: env.DASHBOARD_ORIGIN, 'content-type': 'application/json', 'x-dashboard-write': '1' }, body: command(0, 'To Do', 'platform-body') };
   const res = { setHeader() {}, writeHead(value) { code = value; }, end(value) { body = JSON.parse(value); } };
-  await handler({ store, env })(req, res); assert.equal(code, 200); assert.equal(body.version, 1);
+  const authorize = syntheticOwnerAuthorize;
+  await handler({ store, env, authorize })(req, res); assert.equal(code, 200); assert.equal(body.version, 1);
   req.body = undefined;
   const streamed = { ...command(1, 'In Progress', 'split-utf8-body'), task: { ...task, title: '分割された日本語' } };
   req[Symbol.asyncIterator] = async function* () { for (const byte of Buffer.from(JSON.stringify(streamed))) yield Buffer.from([byte]); };
-  await handler({ store, env })(req, res);
+  await handler({ store, env, authorize })(req, res);
   assert.equal(code, 200); assert.equal(body.title, streamed.task.title); assert.equal(body.version, 2);
   req.body = { oversized: 'x'.repeat(20001) };
-  await handler({ store, env })(req, res); assert.equal(code, 413);
+  await handler({ store, env, authorize })(req, res); assert.equal(code, 413);
 });
 
 test('wire DTO filters storage extensions; invalid board/receipt/date fail without secrets',async t=>{

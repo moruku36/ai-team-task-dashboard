@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { readFile, writeFile } from 'node:fs/promises';
 import { emptyBoard } from '../model.mjs';
 import { handler } from '../server.mjs';
+import { syntheticOwnerAuthorize } from './synthetic-auth.mjs';
 export const env = { DASHBOARD_ORIGIN: 'http://synthetic.invalid' };
 export const task = { id: 'SYNTH-1', title: '合成タスク', status: 'To Do', owner: 'synthetic-agent', group: '現行', detail: '<script>alert(1)</script>', lastConfirmedAt: null };
 export const command = (version, status, requestId) => ({ expectedVersion: version, requestId, task: { ...task, status } });
@@ -18,7 +19,7 @@ export class FixtureStore {
   }
 }
 export async function app(store = new FixtureStore(), options = {}) {
-  const server = createServer(handler({ store, env, ...options }));
+  const server = createServer(handler({ store, env, authorize: syntheticOwnerAuthorize, ...options }));
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const url = `http://127.0.0.1:${server.address().port}`;
   return { store, server, url, close: () => new Promise(resolve => server.close(resolve)),

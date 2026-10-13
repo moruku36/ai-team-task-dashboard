@@ -2,7 +2,10 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "buildCommand": "node cloud/build-deployment.mjs",
   "outputDirectory": "dist/public",
-  "rewrites": [{ "source": "/api/tasks", "destination": "/api/index?dashboard_path=api/tasks" }],
+  "rewrites": [
+    { "source": "/api/tasks", "destination": "/api/index?dashboard_path=api/tasks" },
+    { "source": "/api/quota", "destination": "/api/index?dashboard_path=api/quota" }
+  ],
   "headers": [{ "source": "/(.*)", "headers": [
     { "key": "Cache-Control", "value": "no-store" },
     { "key": "X-Content-Type-Options", "value": "nosniff" },
