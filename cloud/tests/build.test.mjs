@@ -13,7 +13,7 @@ test('static output contains only three allowlisted assets; unexpected files fai
   for (const name of assets) assert.equal(await readFile(join(output, name), 'utf8'), `synthetic-${name}`);
   await writeFile(join(output, 'README.md'), 'unexpected'); await assert.rejects(build(root), /Unexpected public output/);
   const config = JSON.parse(await readFile(new URL('../../vercel.json', import.meta.url), 'utf8'));
-  assert.equal(config.outputDirectory, 'dist/public'); assert.equal(config.buildCommand, 'node cloud/build.mjs');
+  assert.equal(config.outputDirectory, 'dist/public'); assert.equal(config.buildCommand, 'node cloud/build-deployment.mjs');
   assert.deepEqual(config.rewrites.map(r => r.source), ['/api/tasks']);
 });
 

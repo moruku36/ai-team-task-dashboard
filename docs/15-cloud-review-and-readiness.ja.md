@@ -42,3 +42,15 @@
 ## 判定
 
 ローカル合成候補はレビュー指摘修正と21件回帰を完了。本番公開/移行/認証設定の受入は上記未了。既存ローカルBacklog.mdと残量表示のプロセス・設定にはこのレビューで触れていない。
+
+## オフライン配置前検査
+
+`node cloud/deployment-preflight.mjs`（`npm run check:deployment`）はroot manifest、lockfile v3のpg固定版・公式registry/integrity metadata、Functions入口から使うローカルsource、installed pg入口をオフライン点検する。静的3asset buildの成功とは別で、欠測・版不一致・リンク・不正artifact URLがあれば非0終了する。未知フィールド・credential URLの内容をエラーへ出さない。
+
+この検査を通しても実Vercel dependency trace・推移依存の実行互換性・DB・認証は未検証。実平台build/traceと未認証アクセス拒否の受入は引き続き上のチェックリストに残る。検査はinstall・DB接続・認証・設定・配置を起動しない。
+
+2026-10-13再調査ではroot pg固定は存在し、lockfile/installed driverが欠測。隔離コピー・別々の空npm設定・script無効・公式registryのみでlockfile取得を試みたがTLS alert handshake failure（alert40）で終了。正規artifact/integrity未取得のためlockfileを創作しない。npm設定/TLS検証/認証経路を変更せず、合成のみで検査を検証した。
+
+参考： [公式Node依存仕様](https://vercel.com/docs/functions/runtimes/node-js)、[Functions用Install Commandの制約](https://vercel.com/docs/builds/configure-a-build)、[Functions入口とbuild](https://vercel.com/docs/functions/runtimes/node-js/advanced-node-configuration)。
+
+Vercel候補のbuildCommandは `node cloud/build-deployment.mjs` とし、このオフライン検査の失敗時は静的asset生成へ進まない。`npm run build`/`node cloud/build.mjs` は合成・静的asset検証用に維持する。これはローカル候補のコード変更で、実Vercel project設定や配置には適用していない。

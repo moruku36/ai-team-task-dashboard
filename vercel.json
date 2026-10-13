@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "node cloud/build.mjs",
+  "buildCommand": "node cloud/build-deployment.mjs",
   "outputDirectory": "dist/public",
   "rewrites": [{ "source": "/api/tasks", "destination": "/api/index?dashboard_path=api/tasks" }],
   "headers": [{ "source": "/(.*)", "headers": [
