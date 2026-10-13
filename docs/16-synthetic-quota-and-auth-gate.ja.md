@@ -5,7 +5,7 @@
 ## 0. 現在の状態(要約)
 - 達成: 純モジュール統合、`GET /api/quota`、許可リストDTO、合成専用クォータstore、UI要約、**認証必須化(既定拒否)**、`vercel.json` ルーティング案、統合テスト10件。
 - 未達(ブロッカー): **本番認証アダプタ未実装/未承認**、pgロック未実装、DB/Neon未接続、実コレクタ/heartbeat契約未決定、実タスク移行は承認待ち、デプロイ準備未完了(下記 §7)。
-- 本番(`api/index.mjs` → `createVercelHandler()` の既定export)は認証アダプタが無いため**全リクエストを503で拒否**する。これは意図した状態。
+- **【更新: §8】** 本番既定exportは Better Auth 1.7.7 + Sign in with Vercel の**実オーナー認証アダプタを遅延配線**した(コードのみ)。設定(環境変数キー)が揃わない間は `/api/tasks`・`/api/quota`・`/api/auth/*` は503(DB/ネットワーク無し)。**実プロバイダ/ログイン/DBでの受け入れは未実施**。静的3アセットのみ未認証で配信(サインインUIを表示するため。データ無し)。以降の §3 の「全リクエスト認可/全拒否」の記述のうち、静的アセットと `/api/auth/*` は §8 で上書きされる。
 
 ## 1. 既存契約(読んだ範囲)と訂正
 - `GET /api/tasks` → `{ revision, tasks[], observedAt }`。`observedAt` は **配信時刻**(`publicSnapshot` が付与)。タスク公開DTOは `id,title,status,owner,group,detail,lastConfirmedAt,version,updatedAt` のみ。`POST /api/tasks` は `{requestId, expectedVersion, task}`(CAS+冪等)。**この契約・意味論は変更していない。**
@@ -92,4 +92,81 @@
 - **実コレクタ/heartbeat/取り込み**: Windows停止検知、送信契約、署名・認証、書き込みAPIは未決定・未実装。`futureSkewMs: 0` は時計ずれで過剰にstale/referenceへ倒れる可能性あり(安全側)。
 - **実タスク移行は承認待ち**: 実タスクデータ・私的データの読み取り/移行は行っていない。承認後に別途設計。
 - クォータはprovider単位のみ(モデル別は存在しない/作らない)。共有poolの扱いはDTO未整合。
+
+## 8. 本番オーナー認証アダプタ(Better Auth 1.7.7 + Sign in with Vercel)— コードのみ・実環境未検証
+**状態: 実装済み(コード)、未検証。`npm install`・DB接続・ブラウザ/認証API呼び出し・実セッション・資格情報の生成/読み取りは一切していない。実プロバイダ/ログイン/DBの受け入れは未了。**
+
+### 8.1 変更ファイル(今回)
+- 新規: `cloud/owner-auth.mjs`(遅延アダプタ)、`cloud/tests/owner-auth.test.mjs`(6グループ)、`cloud/auth-schema.prep.sql`(**準備のみ・未実行**)。
+- 変更: `cloud/server.mjs`(静的アセットを認可前に配信、`/api/auth/*` ルーティング、本番既定exportに実アダプタを遅延配線、認可→DB接続の順)、`package.json`(`better-auth: 1.7.7`、`pg: 8.23.1`、`engines.node: 22.x`)、`vercel.json`(認証rewrite4本)、`cloud/public/{index.html,app.js,style.css}`(サインイン/サインアウトUI、同一ファイル内)、`cloud/deployment-preflight.mjs`(必須ソースに `owner-auth.mjs` 追加)、`cloud/tests/{quota-integration,build,deployment-preflight}.test.mjs`(アセット非認可・rewrite一覧・fixtureの追随)。
+- 未変更: `api/index.mjs`(合成callbackは配線なし)、タスクのCAS/冪等/クォータの挙動。
+- **未実行(要確認)**: 上記の変更後、`quota-integration` / `build` / `deployment-preflight` / `dashboard` / `ui` の各テストは再実行していない(指示された1コマンド `node --test cloud/tests/owner-auth.test.mjs` のみ実行し **6/6通過**)。`quota-integration.test.mjs` のテスト1・9 とビルド/preflightテストは本変更に合わせて編集済みだが未実行。preflightに `better-auth` のlock検証は追加していない(未実装)。
+
+### 8.2 一次情報で確認できたこと / できなかったこと
+確認済み(公式ドキュメント取得: better-auth.com, vercel.com):
+- Better Auth Vercelプロバイダ: `socialProviders.vercel: { clientId, clientSecret }`、`scope` は任意(スコープはVercel App側で設定)、PKCEは自動、デフォルトのコールバック `/api/auth/callback/vercel`(base path変更時は更新)、クライアント開始は `authClient.signIn.social({provider:"vercel"})`。
+- Node連携: `better-auth/node` の `toNodeHandler(auth)` と `fromNodeHeaders(req.headers)`、`auth.api.getSession({ headers })`。**ボディパーサーより前に**ハンドラを置く必要あり(Express頁の記述)。専用の「Node」頁は404で、Express頁の例を根拠にしている。
+- `pg` の `Pool` を `database` に直接渡せる。`emailAndPassword.enabled` 既定false、`disabledPaths`、`socialProviders.<p>.disableSignUp`、`account.accountLinking.enabled`(既定true)、`advanced.useSecureCookies`、`advanced.disableOriginCheck`(既定false)、`session.expiresIn`(既定7日)、`trustedOrigins`、`baseURL`/`BETTER_AUTH_SECRET`。Cookie名 `better-auth.session_token`、本番では httpOnly/secure。
+- Vercel IdP: ID Token `sub` = ユーザー固有ID、検証はJWKS(`https://vercel.com/.well-known/jwks`)・issuer `https://vercel.com`・audience=client_id・nonce。App作成/Client Secret生成/コールバックURL登録/「Sign-In Access: Members of the team」制限はダッシュボード操作(人間)。Client Secretは最大2つ有効(ローテーション可)。
+未確認・推定(**本物として扱わない**):
+- Better Auth の Vercel プロバイダが保存する `account.accountId` が ID Token の `sub` と一致するか(文書は「プロバイダが割り当てた安定ID」とだけ記載)。**一致しなければ `OWNER_VERCEL_SUBJECT` との照合が常に失敗(=全員拒否)する安全側の失敗**。
+- サーバー側 `auth.api.listUserAccounts` の存在・返却形(文書はクライアント `listAccounts()` のみ)。存在しない/配列でなければ 503(安全側)。
+- HTTPパス `POST /api/auth/sign-in/social`、`POST /api/auth/sign-out` と、`sign-in/social` が `{ url }` を返す挙動(文書に明記なし)。UIは `https://vercel.com/` で始まるURLにのみ遷移する。
+- `advanced.defaultCookieAttributes.sameSite` の受理と既定値(取得頁に記載なし)。OAuthのリダイレクト往復に必要なため `lax` を明示指定(Vercel公式チュートリアルも `lax`)。
+- ID Tokenの署名/nonce/PKCE/stateの検証は**ライブラリ内部に委任**しており、本リポジトリのテストでは検証していない(モックは実OIDCの証明ではない)。
+- Vercel App 側コールバックURLの形: Vercel公式チュートリアルは `{origin}/api/auth/callback` を例示するが、Better Auth は `/api/auth/callback/vercel` を送る。**Vercel App に後者を登録でき、リダイレクトURI不一致にならないか未確認**。
+- Vercel のrewrite後に `req.url` が元URLか宛先URLか、元クエリ(`code`,`state`)が宛先に引き継がれるか(コードは両方に対応する想定だが未検証)。VercelのNodeランタイムが `req.body` を事前消費するか(認証ルートでは `req.body` に触れない)。
+- 最小スコープ(`openid` のみ等)でBetter Authのユーザー作成が成功するか(emailが必須の可能性)。コードは `scope` を指定せずApp側設定に従う。
+
+### 8.3 認証の判定(実装)
+- `createOwnerAuth()` は**遅延**: `DASHBOARD_ORIGIN`(https・厳密一致)、`VERCEL_CLIENT_ID`、`VERCEL_CLIENT_SECRET`、`BETTER_AUTH_SECRET`(32文字以上)、`DATABASE_URL`(postgres)、`OWNER_VERCEL_SUBJECT` のいずれかが欠落/不正なら、ライブラリのimport・構築・DB・ネットワークなしで503。ライブラリ作成失敗も503(次回再試行、秘密はレスポンスに出さない)。
+- 認可: ライブラリの `getSession`(サーバー側検証)で有効なセッションを要求 → 連携アカウントの `providerId==='vercel'` の `accountId` を `OWNER_VERCEL_SUBJECT` と**定数時間比較**。不一致/Vercel連携なし/未知ownerは `viewer`(403)。セッション内のrole/subject、ブラウザ値、`VERCEL=1`、`x-vercel-*`、外側Cookieは不使用。主体は不透明ダイジェストで、アカウントID・氏名・メールは返さない/表示しない。
+- `/api/auth/*` は4本のみ(`GET status`(独自・`anonymous|owner|forbidden` のみ返す)、`POST sign-in/social`、`GET callback/vercel`、`POST sign-out`)。それ以外は404、タスク/クォータデータは返さない。メール/パスワード・他プロバイダは構成せず(`emailAndPassword.enabled:false`、`accountLinking.enabled:false`、`trustedOrigins`は正確なorigin、`disableOriginCheck:false`、`useSecureCookies:true`、`httpOnly`/`secure`/`sameSite:'lax'`、セッション12時間、`rateLimit.enabled:true`)。
+- 順序: 設定 → 静的アセット/認証フロー(DBなし)→ オーナー認可 → DB接続 → ルート。
+- 既知の限界: ライブラリは、ログインに成功した**任意のVercelアカウント**のuser/account/sessionを(許可スコープに応じ氏名・メール・トークン含め)保存し得る。403で拒否されるが行は残る。緩和=Vercel Appの「Sign-In Access: Members of the team」と最小スコープ(人間設定)。
+
+### 8.4 必要な環境変数のキー名(値は人間が秘密UIに入力。本リポジトリ/チャット/ログに載せない)
+`DASHBOARD_ORIGIN`(`https://<ドメイン>` 厳密)、`VERCEL_CLIENT_ID`、`VERCEL_CLIENT_SECRET`、`BETTER_AUTH_SECRET`(長いランダム値)、`DATABASE_URL`(Neon)、`OWNER_VERCEL_SUBJECT`(オーナーのVercelユーザーID=ID Tokenの `sub`。取得方法は人間が承認済みの手段で)。キー名のみ記載、**値は未設定・未確認**。
+
+### 8.5 人間が行う作業(私は実施していない)
+1. Vercel(チームのSettings → Apps)でAppを作成、Client Authenticationは `client_secret_basic`/`client_secret_post` 等でClient Secretを生成(秘密UIで保管)。**Sign-In Accessを「Members of the team」**、Permissionsは必要最小限(`openid`、Better Authがemail必須なら `email`、`profile` は不要なら外す。`offline_access` は付与しない)。
+2. Authorization Callback URL に **`https://<DASHBOARD_ORIGIN のホスト>/api/auth/callback/vercel`** を登録(上記の未確認事項に注意。拒否されたら実際のリダイレクトURIを確認して設計見直し)。ローカル検証が必要なら別途 `http://localhost:<port>/api/auth/callback/vercel`(本コードの本番入口は https のみ受理)。
+3. Vercelプロジェクトの環境変数に §8.4 のキーを秘密として設定(ローカル `.env` は作らない)。
+4. Neon Free: 専用プロジェクト/DB・専用ロールを作成(最小権限: 当該DBのスキーマ作成と表のCRUDのみ)。接続文字列は `DATABASE_URL` のみに設定。
+5. 認証テーブル: **`cloud/auth-schema.prep.sql` は準備のみ**。公式CLI `npx auth@latest generate` の出力で差分確認のうえ、人間が適用(`migrate` も同様)。**未実行・列定義は一次情報で未検証**。
+6. 初回ログイン後のオーナー確認、拒否されるアカウントの確認、サインアウトの確認(実プロバイダ受け入れ)。
+
+### 8.7 追補(Codexレビュー反映)
+**UI初期表示の修正(`cloud/public/app.js`)**: 検証済みの `/api/tasks` スナップショットを一度も受理していない間は、グループ/列の件数を `—`、取得時刻を「未取得」と表示(0件とは表示しない)。接続失敗時、受理済みスナップショットが**無い**なら「まだタスクを取得できていません(0件ではありません)」のみ(「最後に取得」は主張しない)。受理済みが**ある**場合のみ、そのスナップショットを保持して「最終取得…古い可能性があります」と表示。検証済みの空成功のみ真の `0`。テスト: `cloud/tests/initial-unfetched.test.mjs` 3件(`node --test cloud/tests/initial-unfetched.test.mjs` → 3/3通過、VMハーネス=描画ロジックのみ)。
+**`user.validateUserInfo` による事前拒否(`owner-auth.mjs` の `ownerOnlyValidation`)**: Vercelの `profile.sub` が `OWNER_VERCEL_SUBJECT` と(定数時間で)一致する場合のみ許可。`providerId` が `vercel` 以外、profile欠落/`sub`非文字列/不一致、他の認証方法は `{ error: 'owner_only' }` で拒否 → 非オーナーはuser/account/tokenの行を作られない設計。呼び出し側のrole/ヘッダ入力は参照しない。APIセッション+連携アカウント照合(§8.3)は多層防御として維持。
+一次情報で**解決した点**(Codex提示のofficial default branch + 公式docs):
+- `listUserAccounts`: `better-auth/better-auth` default branch `packages/better-auth/src/api/routes/account.ts`(SHA `0b5ff1bb…`)に存在し、`sessionMiddleware` 付きで `accountId`/`providerId` を返す(Codex確認)。
+- Vercelプロバイダ: `packages/core/src/social-providers/vercel.ts`(SHA `776d1028…`)が `profile.sub` を account subject にする(Codex確認)→ `accountId == sub` の懸念は**default branch上では解消**。
+- docs `concepts/users-accounts`: `user.validateUserInfo({ user, source })`、`source.action`(`create-user|link-account|sign-in`)、OAuthでは `source.oauth` にproviderIdと生プロファイル、戻り値は「何も返さない=許可、`error` を持つオブジェクト=拒否」、リダイレクト系はエラーURL、プログラム系は403。
+- Express docs: `toNodeHandler`/`fromNodeHeaders`/`getSession({ headers })`。
+**まだ未解決/未検証**:
+- 上記の根拠は**default branchのソース**であり、**固定した 1.7.7 リリースの実行時挙動の証明ではない**。1.7.7 を実際にインストールして確認するまで、`listUserAccounts` のサーバーAPI名・戻り値、Vercelプロバイダの `accountId`、`validateUserInfo` の引数形(生プロファイルのキー名は `source.oauth.profile` と仮定。違えば全拒否=安全側)はすべて**未検証**。
+- 実ログイン/OIDC(署名・nonce・PKCE・state)/Cookie/Vercel rewrite/Functions/Neon での受け入れは未実施。
+- `sign-in/social`・`sign-out` のHTTPパス、`sameSite` オプション、最小スコープでのユーザー作成は引き続き未確認(§8.2)。
+- 認証テーブル: 公式 `concepts/database#core-schema` の再取得でも**列定義が本文に含まれず**、`cloud/auth-schema.prep.sql` との項目別比較は**実施できなかった**(誤りの訂正もしていない)。未実行・版/実行時未検証のまま。人間が `npx auth@latest generate`(1.7.7固定の実環境)と差分確認すること。
+- `owner-auth.test.mjs`(`ownerOnlyValidation` の静的/モック検証を追加)は**今回未実行**(実行したのは `initial-unfetched` の1コマンドのみ)。最後に実行した `owner-auth.test.mjs` は前回6/6通過。
+
+### 8.8 検証結果と訂正(最終検証ターン)
+**実行した検証(各コマンドを個別実行)**:
+- `node --test cloud/tests/owner-auth.test.mjs` → **6/6 通過**(`ownerOnlyValidation` のモック検証を含む)。
+- `node --test cloud/tests/quota-integration.test.mjs` → **10/10 通過**(認証・UI変更後の既存10統合回帰。fixtureのアセット非認可化後も通過)。
+- `node cloud/build.mjs` → 成功(`dist/public` を出力)。
+- 失敗・修正: なし。未実行: `dashboard`/`ui`/`build`/`deployment-preflight`/`quota-freshness`/`initial-unfetched`(後者は前ターンで3/3)の各スイート(指示外)。デプロイは**未実施**。
+**一次情報状況の訂正**:
+- `validateUserInfo` のプロファイルキー: 公式 `concepts/users-accounts` の例が `source.oauth.profile.hd` を使用しており、**`source.oauth.profile` というキーは文書化されている**(§8.7の「仮定」を訂正)。ただし固定した 1.7.7 の実行時挙動は**未検証**。
+- 認証テーブルの**フィールド網羅**: 公式 core-schema のフィールド一覧(Codex取得)と `cloud/auth-schema.prep.sql` を項目別に照合し、user(7)/session(8)/account(13)/verification(6) の**全フィールドが存在し、過不足なし**(**フィールド網羅は確認済み**)。**列の型・NULL可否・UNIQUE・外部キー制約、1.7.7リリースが実際に生成するSQL、実行時挙動は未検証**。インデックス3本はドラフト独自の追加。**マイグレーションは未適用**。
+- 前回提示のSHA(`account.ts` `0b5ff1bb…`、`vercel.ts` `776d1028…`)は **default branch のメタデータであり、固定した 1.7.7 リリースの証明ではない**。
+**現状**: 実プロバイダのログイン/OIDC、実DB、Neon、実Cookie、Vercel rewrite/Functions、デプロイ(`vercel.json` は未デプロイ)はすべて**未実施・保留**。本番認証アダプタは**コードのみ(未検証)**で、人間の秘密入力・Vercel App登録・DB準備後に実受け入れが必要。
+
+### 8.6 認証関連で残る未実装/未検証
+- 実プロバイダ・実ログイン・実DB・実Cookie・実Vercel rewrite/Functions挙動の受け入れ(すべて未実施)。
+- 認証テーブルのmigration(未実行、列定義は未検証)、`pg` の既存ロック方針と認証テーブルの併用、pgロック(クォータ取り込み)未実装。
+- preflightは `better-auth` のlock/インストール検証が未対応。`package-lock.json` と `node_modules` は存在しない(`npm install` 未実施)ため `check:deployment` はnot ready。
+- 実タスク(113件)の移行は未承認で、読み取り・移行していない。
+- 本番デプロイ・Vercelプロジェクト/環境変数/保護設定の変更は未実施。
 

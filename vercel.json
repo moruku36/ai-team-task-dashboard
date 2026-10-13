@@ -4,7 +4,11 @@
   "outputDirectory": "dist/public",
   "rewrites": [
     { "source": "/api/tasks", "destination": "/api/index?dashboard_path=api/tasks" },
-    { "source": "/api/quota", "destination": "/api/index?dashboard_path=api/quota" }
+    { "source": "/api/quota", "destination": "/api/index?dashboard_path=api/quota" },
+    { "source": "/api/auth/status", "destination": "/api/index?dashboard_path=api/auth/status" },
+    { "source": "/api/auth/sign-in/social", "destination": "/api/index?dashboard_path=api/auth/sign-in/social" },
+    { "source": "/api/auth/callback/vercel", "destination": "/api/index?dashboard_path=api/auth/callback/vercel" },
+    { "source": "/api/auth/sign-out", "destination": "/api/index?dashboard_path=api/auth/sign-out" }
   ],
   "headers": [{ "source": "/(.*)", "headers": [
     { "key": "Cache-Control", "value": "no-store" },

@@ -47,18 +47,21 @@ function advancesSnapshot(next) {
   });
 }
 const el = id => document.getElementById(id);
+// A count is only real after a validated successful /api/tasks snapshot; until then it is unfetched ("—"), never 0.
+const fetched = () => snapshot.revision !== undefined;
+const count = n => fetched() ? n : '—';
 const time = value => value ? new Date(value).toLocaleString('ja-JP') : '未記録';
 const node = (tag, text, className) => { const n = document.createElement(tag); n.textContent = text; if (className) n.className = className; return n; };
 function render() {
   el('groups').replaceChildren(...groups.map(g => {
-    const b = node('button', `${g} · ${snapshot.tasks.filter(t => t.group === g).length}`, group === g ? 'active' : '');
+    const b = node('button', `${g} · ${count(snapshot.tasks.filter(t => t.group === g).length)}`, group === g ? 'active' : '');
     b.onclick = () => { group = g; render(); }; return b;
   }));
   const query = el('search').value.toLocaleLowerCase();
   el('board').replaceChildren(...states.map((s, i) => {
     const column = node('section', '', 'column');
     const tasks = snapshot.tasks.filter(t => t.group === group && t.status === s && `${t.title} ${t.owner} ${t.detail}`.toLocaleLowerCase().includes(query));
-    column.append(node('h2', `${names[i]} · ${tasks.length}`));
+    column.append(node('h2', `${names[i]} · ${count(tasks.length)}`));
     for (const task of tasks) {
       const card = node('button', '', 'card'); card.append(node('span', task.id, 'id'), node('strong', task.title),
         node('small', `主担当: ${task.owner}`), node('small', `更新: ${time(task.updatedAt)}`), node('small', `確認: ${time(task.lastConfirmedAt)}`));
@@ -94,7 +97,10 @@ async function refresh() {
     }
   } catch {
     if (generation !== readGeneration || busy) return;
-    online = false; el('connection').textContent = '接続できません'; el('notice').textContent = '表示は最後に取得した状態です。更新ボタンで再接続できます。';
+    online = false; el('connection').textContent = '接続できません';
+    // Only claim "last received" when an accepted snapshot actually exists; otherwise nothing was ever received.
+    if (fetched()) { el('times').textContent = `最終取得: ${time(snapshot.observedAt)} · 古い可能性があります(再取得できていません)`; el('notice').textContent = '表示は最後に取得した状態で、古い可能性があります。更新ボタンで再接続できます。'; }
+    else { el('times').textContent = '未取得'; el('notice').textContent = 'まだタスクを取得できていません(0件ではありません)。更新ボタンで再接続できます。'; }
   }
   el('save').disabled = busy || !online || !selected || selectedStale;
 }
@@ -162,6 +168,34 @@ async function refreshQuota() {
     renderQuota(next);
   } catch { el('quota').replaceChildren(node('p', 'クォータ情報を取得できません(不明)')); }
 }
+// Sign-in panel. State comes from the server (/api/auth/status: anonymous|owner|forbidden); no name, email or account id is ever requested or shown.
+const authLabels = { anonymous: 'サインインしてください', owner: 'サインイン済み', forbidden: 'このアカウントには権限がありません' };
+async function authPost(path, body) {
+  const response = await fetch(path, { method: 'POST', credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(15000), headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return response.json();
+}
+async function signIn() {
+  try {
+    const result = await authPost('/api/auth/sign-in/social', { provider: 'vercel', callbackURL: '/' });
+    // Navigate only to the Vercel authorization endpoint returned by the library.
+    if (typeof result?.url === 'string' && result.url.startsWith('https://vercel.com/')) location.assign(result.url); else throw new Error('Unexpected sign-in response');
+  } catch { el('auth').replaceChildren(node('span', 'サインインを開始できません')); }
+}
+async function signOut() {
+  try { await authPost('/api/auth/sign-out', {}); } catch { /* the session status below is authoritative */ }
+  await refreshAuth(); refresh(); refreshQuota();
+}
+async function refreshAuth() {
+  try {
+    const response = await fetch('/api/auth/status', { cache: 'no-store', credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(15000) });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const { state } = await response.json();
+    if (!Object.hasOwn(authLabels, state)) throw new Error('Invalid state');
+    const button = node('button', state === 'anonymous' ? 'Vercelでサインイン' : 'サインアウト'); button.onclick = state === 'anonymous' ? signIn : signOut;
+    el('auth').replaceChildren(node('span', authLabels[state]), button);
+  } catch { el('auth').replaceChildren(node('span', '認証が利用できません')); }
+}
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { refresh(); refreshQuota(); } });
-render(); refresh(); setInterval(refresh, 30000); setInterval(refreshQuota, 30000);
-if (typeof setTimeout === 'function') setTimeout(refreshQuota, 0);
+el('times').textContent = '未取得'; render(); refresh(); setInterval(refresh, 30000); setInterval(refreshQuota, 30000);
+if (typeof setTimeout === 'function') { setTimeout(refreshQuota, 0); setTimeout(refreshAuth, 0); }

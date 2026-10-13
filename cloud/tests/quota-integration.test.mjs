@@ -27,7 +27,7 @@ test('unauthenticated, rejected, errored and non-owner GET/POST fail closed with
   const variants = [[undefined, 503], [() => null, 401], [async () => ({ verified: false, role: 'owner', subject: 'x' }), 401], [async () => ({ role: 'owner', subject: 'x' }), 401],
     [async () => ({ verified: 'true', role: 'owner', subject: 'x' }), 401], [async () => { throw new Error('SECRET_SENTINEL'); }, 503],
     [async () => ({ verified: true, role: 'viewer', subject: 'x' }), 403], [async () => ({ verified: true, role: 'owner', subject: '' }), 403]];
-  const requests = [['GET', '/'], ['GET', '/app.js'], ['GET', '/api/tasks'], ['POST', '/api/tasks'], ['GET', '/api/quota'], ['POST', '/api/quota'],
+  const requests = [['GET', '/api/tasks'], ['POST', '/api/tasks'], ['GET', '/api/quota'], ['POST', '/api/quota'],
     ['GET', '/api/index?dashboard_path=api/tasks'], ['GET', '/api/index?dashboard_path=api/quota'], ['POST', '/api/index?dashboard_path=api/tasks'], ['GET', '/api?dashboard_path=api/quota']];
   for (const [authorize, expected] of variants) {
     const { store, quotaStore } = spies(), a = await app(store, { authorize, quotaStore, env: hostile }); t.after(() => a.close());
@@ -35,6 +35,9 @@ test('unauthenticated, rejected, errored and non-owner GET/POST fail closed with
       const response = await fetch(a.url + path, { method, headers: { ...spoof, Origin: hostile.DASHBOARD_ORIGIN, 'Content-Type': 'application/json', 'X-Dashboard-Write': '1' }, body: method === 'POST' ? JSON.stringify(command(0, 'To Do', 'denied-write')) : undefined });
       assert.equal(response.status, expected, `${method} ${path}`); assert.equal(response.headers.get('cache-control'), 'no-store'); assert.doesNotMatch(await response.text(), /SECRET_SENTINEL/);
     }
+    assert.deepEqual([store.reads, store.writes, quotaStore.reads], [0, 0, 0]);
+    // The 3 static assets (no data) load without a session so the sign-in UI is reachable; still no storage access.
+    for (const path of ['/', '/app.js', '/style.css']) assert.equal((await fetch(a.url + path)).status, 200);
     assert.deepEqual([store.reads, store.writes, quotaStore.reads], [0, 0, 0]);
   }
 });
@@ -168,7 +171,8 @@ test('UI shows current/stale/reference/unknown with distinct timestamps; failure
   assert.deepEqual([...assets].sort(), ['app.js', 'index.html', 'style.css']);
   assert.match(await readFile(new URL('../public/index.html', import.meta.url), 'utf8'), /id="quota"/);
   const config = JSON.parse(await readFile(root('vercel.json'), 'utf8'));
-  assert.deepEqual(config.rewrites, [{ source: '/api/tasks', destination: '/api/index?dashboard_path=api/tasks' }, { source: '/api/quota', destination: '/api/index?dashboard_path=api/quota' }]);
+  assert.deepEqual(config.rewrites.map(r => r.source), ['/api/tasks', '/api/quota', '/api/auth/status', '/api/auth/sign-in/social', '/api/auth/callback/vercel', '/api/auth/sign-out']);
+  for (const r of config.rewrites) assert.equal(r.destination, '/api/index?dashboard_path=' + r.source.slice(1)); // exact rewrites, no wildcards
 });
 
 test('no real collector, network, process or credential access in quota/auth modules; synthetic callback is not wired in production code', async () => {

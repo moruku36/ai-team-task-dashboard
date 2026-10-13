@@ -2,7 +2,7 @@
   "name": "ai-team-task-dashboard",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": { "node": "22.x" },
   "scripts": { "build": "node cloud/build.mjs", "check:deployment": "node cloud/deployment-preflight.mjs", "start": "node cloud/server.mjs", "test": "node --test cloud/tests/*.test.mjs" },
-  "dependencies": { "pg": "8.23.1" }
+  "dependencies": { "better-auth": "1.7.7", "pg": "8.23.1" }
 }
