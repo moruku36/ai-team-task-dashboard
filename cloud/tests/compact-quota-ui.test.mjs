@@ -62,3 +62,37 @@ test('Antigravity renders shared pools independently and leaves model references
   assert.match(compact, /Gemini shared.*5h 42%/); assert.match(compact, /Claude \/ GPT shared.*5h 18%/);
   assert.doesNotMatch(compact, /Synthetic model/); assert.match(text(panel.children[1]), /individual quota not reported/);
 });
+
+test('quota provenance distinguishes observation, historical collection and task polling', () => {
+  const { context, render } = harness();
+  context.c = { collected_at: '2030-01-02T00:00:00Z', last_success_collected_at: '2030-01-01T00:00:00Z' };
+  context.r = { observed_at: '2029-12-31T23:00:00Z' };
+  assert.match(runInContext('quotaObservedText(c,r,true,"codex")', context), /観測: 2030\/01\/01 08:00:00 JST・参考値/);
+  context.r = { observed_at: null };
+  assert.equal(runInContext('quotaObservedText(c,r,false,"codex")', context), '観測: 未確認');
+  assert.match(runInContext('quotaObservedText(c,r,true,"antigravity")', context), /収集: 2030\/01\/01 09:00:00 JST・参考値/);
+  const panel = render(quota([card({ current_rows: [], last_success_collected_at: stamp(-86400000), last_known_rows: [row({ period: 'weekly', remaining_percent: 49, observed_at: stamp(-86400000) })] })]));
+  assert.match(text(panel.children[0]), /Weekly 49% reference/);
+  assert.match(text(panel.children[0]), /観測:.*参考値/);
+  assert.match(text(panel.children[0]), /表示の更新だけでは残量を再取得しません/);
+  assert.match(text(panel.children[0]), /ChatGPTの単独利用枠は未取得/);
+  assert.match(source, /タスク一覧の同期/);
+  assert.doesNotMatch(source, /最終取得:/);
+});
+
+test('historical percentage and reset use the same reference row', () => {
+  const { render } = harness();
+  const oldReset = stamp(3600000), newReset = stamp(7200000);
+  const panel = render(quota([card({ current_rows: [row({ fresh_until: stamp(-1000), remaining_percent: 11, reset_at: newReset })], last_known_rows: [row({ remaining_percent: 23, reset_at: oldReset })] })]));
+  const stampJst = new Intl.DateTimeFormat('ja-JP', {timeZone: 'Asia/Tokyo', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false}).format(Date.parse(oldReset));
+  assert.match(text(panel.children[0]), /5h 23% reference/);
+  assert.ok(text(panel.children[0]).includes(`参考 ${stampJst} JST`));
+});
+
+test('an unreported five-hour window stays unknown even when its age is unavailable', () => {
+  const { render } = harness();
+  const panel = render(quota([card({status:'partial',current_rows:[row({status:'not_reported',stale:true,remaining_percent:null,observed_at:null,reset_at:null,fresh_until:null})]})]));
+  const window = panel.children[0].children[0].children.find(c=>c.className==='quota-rates').children[0];
+  assert.equal(window.className,'quota-window unknown');
+  assert.match(text(window),/5h \?.*リセット: 未取得.*観測: 未確認/);
+});

@@ -9,3 +9,6 @@ main{padding:12px 18px}.toolbar{gap:10px;margin:10px 0}.toolbar label{gap:8px;fo
 
 .quota-summary-card strong,.quota-summary-card .quota-badge{display:block}.quota-summary-card strong{font-size:12px;margin-top:4px}.quota-summary-card .quota-badge{margin:2px 0}.quota-summary-card>small{display:block;margin:0 0 3px}
 .quota-window{display:block}.quota-summary-card .quota-reset{display:block;max-width:240px;font-size:10px;line-height:1.4;white-space:normal;margin:2px 0;font-weight:400}.quota-rates{gap:8px 16px}
+/* Keep collection provenance visible without expanding quota details. */
+.quota-summary-note { grid-column: 1 / -1; margin: 0; font-size: .8rem; color: var(--muted, #64748b); }
+.quota-observed { display: block; margin-top: .2rem; font-size: .7rem; }

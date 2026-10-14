@@ -33,7 +33,7 @@ test('HTTP snapshot renders lifecycle, private groups, literal details and recon
       await runInContext('refresh()', context);
       const column = el('board').children.find(c => c.children[0].textContent.startsWith(label + ' ·'));
       assert.equal(column.children.length, 2); assert.match(text(column), /synthetic-agent/); assert.match(text(column), /<script>unsafe\(\)<\/script>/);
-      assert.match(text(el('groups')), /現行 · 1/); assert.match(el('times').textContent, /最終取得/);
+      assert.match(text(el('groups')), /現行 · 1/); assert.match(el('times').textContent, /タスク一覧の同期/);
     }
     const saved = text(el('board')); disconnected = true;
     await runInContext('refresh()', context); assert.equal(text(el('board')), saved); assert.match(el('connection').textContent, /接続できません/);
