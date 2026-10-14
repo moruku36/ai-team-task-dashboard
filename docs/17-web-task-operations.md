@@ -10,7 +10,7 @@ Each job packages reviewed runtime source plus one private `task-operator-reques
 
 ## Operator sequence
 
-1. Fetch the exact reviewed commit; verify intended team/project and production target. Keep the request and receipts in a private workspace, never Git.
+1. Fetch the exact reviewed commit; verify intended team/project and production target. Keep the request and receipts in a private workspace, never Git. Use `scripts/Export-WebOperatorDeployment.mjs --commit <sha> --job-request <private-path> --output <private-output>`: it changes buildCommand only in that deployment's copy of vercel.json (which takes precedence over API projectSettings). Omit --job-request for the ordinary deployment.
 2. Submit an `inspect` job using the existing authenticated Vercel connector. Match by task ID, exact title or supplied HTTPS reference URL. Inspect reports only matching IDs/versions/statuses. Multiple matches require human/agent review; do not create a duplicate.
 3. Set `expectedVersion` to the inspected version (0 only when there is no match). Submit an `apply` job. Maximum 10 operations, with an atomic database transaction, CAS and stable unique request IDs. Existing task details are retained and an update note is appended. Other document fields remain untouched.
 4. Read the `DASHBOARD_OPERATOR_PROOF` build event: committed revision, task digests and readback success. If the outcome is uncertain, inspect before retrying. Retry the same logical operation with exactly the same request and ID; never invent a second ID to get around an uncertain response. A committed job followed by a build/alias failure is still a committed write.

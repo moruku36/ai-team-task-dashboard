@@ -14,7 +14,10 @@ const paths = ['package.json','vercel.json','api/index.mjs','cloud/server.mjs','
 if (request) paths.push('cloud/task-operator.mjs','cloud/run-task-operator-job.mjs');
 const files = paths.map(file => {
   for (let n = 1; n <= file.split('/').length; n++) if (lstatSync(resolve(root, ...file.split('/').slice(0, n))).isSymbolicLink()) throw Error('Linked source refused');
-  return { file, data: readFileSync(resolve(root, file)).toString('base64'), encoding: 'base64' };
+  let bytes = readFileSync(resolve(root, file));
+  // vercel.json overrides request projectSettings; change only this private deployment copy.
+  if (request && file === 'vercel.json') { const config = JSON.parse(bytes); config.buildCommand = 'node cloud/run-task-operator-job.mjs'; bytes = Buffer.from(JSON.stringify(config)); }
+  return { file, data: bytes.toString('base64'), encoding: 'base64' };
 });
 if (request) { const raw = readFileSync(outside(request)); if (raw.length > 65536) throw Error('Private request too large'); const value = JSON.parse(raw); if (!['inspect','apply'].includes(value.mode)) throw Error('Invalid job mode'); files.push({ file: 'task-operator-request.json', data: raw.toString('base64'), encoding: 'base64' }); }
 writeFileSync(outside(output), JSON.stringify({ commit, files, buildCommand: request ? 'node cloud/run-task-operator-job.mjs' : 'node cloud/build-deployment.mjs' }));
