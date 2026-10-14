@@ -1,0 +1,11 @@
+# 非公開スナップショット移行
+
+既存Backlog MarkdownのID・状態・主担当・表示区分・原文を読み取り、空の専用DBへ単一transactionで移行する。説明と履歴を切り捨てず、元ファイルのバイト列とSHA-256もDB内の非公開archiveへ保持する。DTOはarchiveを返さず、本人限定の既存タスクAPIだけが表示データを返す。
+
+長い履歴を扱うためdetailは100,000文字、書込みJSONは500,000 bytesに制限する。既存のversion比較・同一request ID再試行・owner gateは維持する。原文の確認日時が不明な場合はnullとし、移行時刻で埋めない。Backlogのローカル日時は既存WindowsデータのJSTとして解釈する。
+
+既存クォータは新しい収集を始めず、元の収集・観測・最終成功・reset時刻を保存する。表示時に既存sanitizeUsageの鮮度判定を再適用し、古い値やreset後の値を最新と扱わない。モデルごとの独立quotaを推測しない。
+
+実データpayloadと実行用one-off import scriptは公開Gitに含めない。移行は既存Native DB bindingを内部利用し、資格情報を読み出し・表示・転送しない。private deployment sourceにのみpayloadを渡し、public出力は既存3 assetsだけ。buildログは件数・ハッシュ・一致判定だけ。非空のtargetを検出した場合は上書きせず停止する。元ファイルは変更しない。
+
+検証は原文archive/保存document/タスクDTOの一致、重複なし、quota時刻保持、合成HTTPの匿名拒否・本人role取得・長文の状態変更を区別する。実本人cookieを取得せず、本人の通常画面が未確認ならその点を残件として明記する。

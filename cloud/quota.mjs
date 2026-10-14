@@ -1,7 +1,8 @@
 // Quota DTO adapter boundary. Pure: no I/O, no clock reads (`now` injected), no collector or network access.
-// Raw records come from a store the caller injects (synthetic only today); only allowlisted fields leave this module.
+// Raw records come from the owner-authorized store; only allowlisted fields leave this module.
 // Never invents per-model quotas: one provider-level entry per provider/source.
 import { evaluateQuotaFreshness, parseIsoTimestamp } from './quota-freshness.mjs';
+import { sanitizeUsage } from './usage-metadata.mjs';
 export const PROVIDERS = Object.freeze(['codex', 'claude', 'ag']);
 // codex/claude: native observed_at is required. ag: statusline needs observed_at; the CLI source may fall back to collection time.
 const SOURCES = Object.freeze({ codex: ['native'], claude: ['native'], ag: ['statusline', 'cli'] });
@@ -77,5 +78,5 @@ export async function publicQuota(quotaStore, now = new Date()) {
     if (group) group.count++; else groups.set(key, { entry, count: 1 });
   }
   const entries = [...groups.values()].slice(0, 6).map(({ entry, count }) => count === 1 ? entry : ambiguousEntry(entry.provider, entry.source));
-  return { servedAt, entries };
+  return { servedAt, entries, ...(stored.usageSnapshot ? { usage: sanitizeUsage(stored.usageSnapshot, now.getTime()) } : {}) };
 }

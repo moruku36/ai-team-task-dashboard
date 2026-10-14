@@ -59,10 +59,10 @@ export function handler({ store, env = process.env, authorize, quotaStore, now =
         let body = typeof req.body === 'string' ? req.body : req.body === undefined ? '' : JSON.stringify(req.body);
         if (req.body === undefined) {
           const chunks = []; let size = 0;
-          for await (const chunk of req) { const bytes = Buffer.from(chunk); size += bytes.length; if (size > 20000) throw new Problem(413, 'Body too large'); chunks.push(bytes); }
+          for await (const chunk of req) { const bytes = Buffer.from(chunk); size += bytes.length; if (size > 500000) throw new Problem(413, 'Body too large'); chunks.push(bytes); }
           body = Buffer.concat(chunks).toString('utf8');
         }
-        if (Buffer.byteLength(body) > 20000) throw new Problem(413, 'Body too large');
+        if (Buffer.byteLength(body) > 500000) throw new Problem(413, 'Body too large');
         let command; try { command = JSON.parse(body); } catch { throw new Problem(400, 'Invalid JSON'); }
         return json(200, await mutate(store, command, 'owner'));
       }
@@ -94,7 +94,9 @@ export function createVercelHandler({ connect = connectStore, env = process.env,
         return res.end(JSON.stringify({ error: access.error }));
       }
       connection ??= connect(env);
-      return await handler({ store: await connection, env, authorize: async () => access.principal, quotaStore })(req, res);
+      const store = await connection;
+      const connectedQuota = quotaStore ?? (typeof store.readQuota === 'function' ? { read: () => store.readQuota() } : undefined);
+      return await handler({ store, env, authorize: async () => access.principal, quotaStore: connectedQuota })(req, res);
     } catch {
       connection = undefined;
       if (res.headersSent) return res.end();

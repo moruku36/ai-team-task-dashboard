@@ -7,6 +7,10 @@ export class PostgresStore {
     if (!rows.length) throw new Error('Schema not initialized');
     return rows[0].document;
   }
+  async readQuota() {
+    const { rows } = await this.pool.query("SELECT document->'quota' AS quota FROM dashboard_state WHERE id = 1");
+    return rows[0]?.quota ?? { records: [] };
+  }
   async transaction(change) {
     const client = await this.pool.connect();
     try {

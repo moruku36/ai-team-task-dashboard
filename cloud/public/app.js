@@ -21,7 +21,7 @@ const validTask = task => task && typeof task === 'object' && !Array.isArray(tas
   typeof task.id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(task.id) &&
   typeof task.title === 'string' && task.title.trim() && task.title.length <= 300 &&
   typeof task.owner === 'string' && task.owner.trim() && task.owner.length <= 100 &&
-  typeof task.detail === 'string' && task.detail.length <= 10000 &&
+  typeof task.detail === 'string' && task.detail.length <= 100000 &&
   states.includes(task.status) && groups.includes(task.group) &&
   Number.isSafeInteger(task.version) && task.version > 0 && validTime(task.updatedAt) &&
   (task.lastConfirmedAt === null || validTime(task.lastConfirmedAt));
@@ -143,10 +143,27 @@ const validQuotaEntry = entry => entry && typeof entry === 'object' && Object.ha
   quotaResets.includes(entry.resetState) && ['observedAt', 'collectedAt', 'lastSuccessAt', 'resetAt'].every(key => nullableTime(entry[key])) &&
   (entry.usedPercent === null || typeof entry.usedPercent === 'number');
 function validQuota(value) {
+  const usage = value?.usage;
+  if (usage && (usage.display_schema_version !== 1 || !Array.isArray(usage.cards) || usage.cards.length > 3 || !usage.cards.every(c => ['codex', 'claude', 'antigravity'].includes(c.provider) && Array.isArray(c.current_rows) && Array.isArray(c.last_known_rows) && c.current_rows.length <= 20 && c.last_known_rows.length <= 20))) return false;
   return value && validTime(value.servedAt) && Math.abs(Date.now() - Date.parse(value.servedAt)) <= 60000 &&
     Array.isArray(value.entries) && value.entries.length <= 6 && value.entries.every(validQuotaEntry);
 }
 function renderQuota(quota) {
+  if (quota.usage) {
+    const items = quota.usage.cards.map(card => {
+      const item = node('div', '', 'quota-item reference');
+      item.append(node('h3', `${card.provider === 'antigravity' ? 'AG' : quotaProviders[card.provider]} ・ 保存済み取得値`), node('small', `収集: ${time(card.collected_at)} ・ 最終成功: ${time(card.last_success_collected_at)}`));
+      for (const [rows, historical] of [[card.current_rows, false], [card.last_known_rows, true]]) for (const row of rows) {
+        const current = !historical && row.status === 'available';
+        const used = typeof row.used_percent === 'number' && Number.isFinite(row.used_percent) && row.used_percent >= 0 && row.used_percent <= 100 ? `${row.used_percent}%` : '不明';
+        item.append(node('small', `${row.model_family} / ${row.period}${row.shared_pool ? ' / ' + row.shared_pool : ''} ・ ${current ? '取得値' : historical ? '前回値(参考)' : '現在値不明'}: ${used} ・ 観測: ${time(row.observed_at)} ・ リセット: ${time(row.reset_at)}${row.reset_passed ? ' (更新待ち)' : ''}`));
+      }
+      if (!card.current_rows.length && !card.last_known_rows.length) item.append(node('small', 'クォータ値は不明'));
+      item.append(node('small', '新規収集は開始していません。古い値は参考情報です。'));
+      return item;
+    });
+    items.push(node('small', `配信: ${time(quota.servedAt)}`)); el('quota').replaceChildren(...items); return;
+  }
   const items = quota.entries.map(entry => {
     const item = node('div', '', `quota-item ${entry.freshness}`);
     const percent = entry.usedPercent === null ? (entry.lastKnown ? `前回値(参考) ${entry.lastKnown.usedPercent}%` : '使用率: 不明') : `${entry.freshness === 'current' ? '使用率' : '使用率(参考)'}: ${entry.usedPercent}%`;

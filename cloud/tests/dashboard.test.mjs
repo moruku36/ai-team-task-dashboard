@@ -43,7 +43,7 @@ test('HTTP input boundaries, JSON/write header/origin, reserved IDs and single o
   const a = await app(); t.after(() => a.close());
   const request = command(0, 'To Do', 'boundary-task');
   const encoded = JSON.stringify(request);
-  const exact = encoded + ' '.repeat(20000 - Buffer.byteLength(encoded));
+  const exact = encoded + ' '.repeat(500000 - Buffer.byteLength(encoded));
   assert.equal((await a.post(exact)).status, 200);
   assert.equal((await a.post(exact + ' ')).status, 413);
   assert.equal((await a.post('{')).status, 400);
@@ -58,7 +58,7 @@ test('HTTP input boundaries, JSON/write header/origin, reserved IDs and single o
   for (const changed of [{ requestId: 12345678 }, { requestId: 'x'.repeat(101) }, { expectedVersion: '1' }, { unexpected: true }]) assert.equal((await a.post({ ...command(1, 'Done', 'bad-command'), ...changed })).status, 400);
   assert.equal((await a.post({ ...command(1, 'Done', 'numeric-task-id'), task: { ...task, id: 123 } })).status, 400);
   assert.equal((await a.post({ ...command(1, 'Done', 'array-owner'), task: { ...task, owner: ['a', 'b'] } })).status, 400);
-  for (const [key, limit] of [['title', 300], ['owner', 100], ['detail', 10000]]) {
+  for (const [key, limit] of [['title', 300], ['owner', 100], ['detail', 100000]]) {
     const id = `LIMIT-${key}`;
     const base = { ...command(0, 'To Do', `limit-${key}-ok`), task: { ...task, id, [key]: 'x'.repeat(limit) } };
     assert.equal((await a.post(base)).status, 200);
@@ -123,7 +123,7 @@ test('platform-preparsed JSON/rewrite and split UTF-8 with strict Origin', async
   req[Symbol.asyncIterator] = async function* () { for (const byte of Buffer.from(JSON.stringify(streamed))) yield Buffer.from([byte]); };
   await handler({ store, env, authorize })(req, res);
   assert.equal(code, 200); assert.equal(body.title, streamed.task.title); assert.equal(body.version, 2);
-  req.body = { oversized: 'x'.repeat(20001) };
+  req.body = { oversized: 'x'.repeat(500001) };
   await handler({ store, env, authorize })(req, res); assert.equal(code, 413);
 });
 

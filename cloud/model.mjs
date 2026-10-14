@@ -37,7 +37,7 @@ export function taskInput(input) {
   if (!statuses.includes(input.status) || !groups.includes(input.group)) throw new Problem(400, 'Invalid status/group');
   const confirmed = input.lastConfirmedAt == null ? null : canonicalTime(input.lastConfirmedAt);
   return { id: input.id, title: string(input.title, 300, true), status: input.status,
-    owner: string(input.owner, 100, true), group: input.group, detail: string(input.detail ?? '', 10000), lastConfirmedAt: confirmed };
+    owner: string(input.owner, 100, true), group: input.group, detail: string(input.detail ?? '', 100000), lastConfirmedAt: confirmed };
 }
 export async function mutate(store, command, actor = 'owner') {
   if (!command || typeof command !== 'object' || Array.isArray(command) ||
