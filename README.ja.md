@@ -2,64 +2,94 @@
 
 言語：**日本語** | [English](README.md)
 
-## 現状と次の計画（2026-10-12）
+AIと進める仕事の「進行中・承認待ち・中断・完了」を見渡し、保存済みの利用残量が今も参考になるか確認する、個人運用のダッシュボードです。
 
-**現在は、公式Backlog.md v1.53.0を使うWindowsローカル版が稼働しています。PC停止中でも本人が一覧を見られるVercel＋Neon版は導入準備中です。初版設計はマージ済みで、画面／APIは未deploy・実データ未移行です。** NeonリソースはFree／Availableを確認済みですが、地域・プロジェクト接続・実DB疎通は未確認です。構築・アクセス保護は合成データだけで検証します。
+## フェーズ1完了 — 2026-10-14
 
-![現在のWindowsローカル版と計画中の非公開クラウド版](docs/images/cloud-architecture.svg)
+**本人がサインイン後の新しい本番画面を確認し、フェーズ1の完了を明言しました。** Windowsローカルの基盤と、本人専用のVercel＋Neonダッシュボードを実装済みです。次の段階は開発候補の整理であり、実装日程の確約ではありません。
 
-**[全体設計とMermaid構成図](docs/12-cloud-architecture.ja.md)** から読むと、現在と計画、認証、更新・閲覧経路、単一正本への移行、無料枠と未検証事項が分かります。
+- 6状態のタスクボード、1タスク1主担当、検索、詳細、現行／要棚卸し／完了履歴のグループ。
+- 本人専用サインイン、全デプロイのVercel保護、Neon PostgreSQLへの私的状態保存。PC停止中もクラウド画面を閲覧できます。
+- 私的タスクの移行と読戻し照合。実タスク・履歴・認証資格情報は公開リポジトリに含めません。
+- クラウド更新のバージョン照合（CAS）と同一要求の再送保護。画面は30秒ごとと保存後に再取得し、接続・更新時刻を表示。
+- 上部圧縮、ローカルfavicon再利用、サービス別色分け、残量サマリ。詳細は初期状態で閉じ、更新後も開閉状態とフォーカスを保持。不明・実際の0%・古い参考値を区別し、Antigravityの共有プールを分離。
+- 合成データの統合確認とheadlessブラウザ描画確認。最終UI／build／quota／認証互換性の15件は成功。[PR #4](https://github.com/moruku36/ai-team-task-dashboard/pull/4)で本番反映後、本人の画面確認も完了。
 
-[English design](docs/12-cloud-architecture.md)／[日本語の図](docs/images/cloud-architecture.svg)／[English diagram](docs/images/cloud-architecture.en.svg)。
+保存済みクォータは継続収集を意味しません。この作業で収集器は再開しておらず、古い観測値は参考扱いです。クラウドAIからの自動更新、時系列分析、継続的な稼働監視はフェーズ1の達成項目に含めません。
 
-| 現在：稼働済み | 計画：導入準備中 |
+## 元に使ったOSS：Backlog.md
+
+採用したOSSの正式名称は **MrLesk氏の[Backlog.md](https://github.com/MrLesk/Backlog.md/tree/v1.53.0)** です。v1.53.0に固定し、MITライセンスの公式Windows実行ファイルを利用しています。基本機能はMarkdownタスク、CLI、MCP、ターミナルKanban、ローカルWebボード、検索、担当者、ラベル、優先度、マイルストーン、依存関係、受入条件／Definition of Doneです。no-gitモードでGitなしでも利用できます。[選定記録](docs/oss-reselection-20261011.ja.md)も参照できます。
+
+ローカル版は公式CLI/MCP・標準Web UIと、repo外の共通no-git保存先を使い、file watch→WebSocket→画面へ反映します。クラウド版は本repo独自のUI/APIで、Neonを正本としています。Backlog.md自体のホスティングでも、全機能の移植でもありません。**旧CLI/MCP保存先との自動同期はありません。** 既存ローカルスクリプトはローカル保存先を操作します。
+
+### OSSの基本機能でできること
+
+公式v1.53.0の統計実装とoverviewコマンドには、個人でも役立つローカル集計があります。
+
+| 標準機能 | 分かること・注意点 |
 |---|---|
-| 公式Backlog.mdのCLI／MCP／標準Web画面 | Vercelの新しいKanban UI／API。Backlog.md自体のホストではない |
-| 共通no-git Markdownが正本。私的タスクはローカルに取り込み済み | Neon PostgreSQLを唯一の正本にする。旧CLI/MCPとの自動同期はしない |
-| loopbackで閲覧。PC起動が必要 | Vercel Authentication＋All Deploymentsで本人限定・全URL保護を検証 |
-| file watch→WebSocket→標準画面 | MVPは30秒ごとと保存後の再取得。既存UIと機能・操作が完全に同じではない |
+| 状態／優先度別件数・完了率 | 読み込んだタスクの現在の内訳。週ごとの完了傾向ではない |
+| 最近の活動 | 7日以内の作成・更新タスク。実行ログではない |
+| 長期未更新の候補 | 30日超更新のない未完了タスク。特定状態に滞留した時間ではない |
+| 依存によるブロック | 読み込まれた依存先が未完了のタスク。本画面の手動Blocked状態とは別 |
+| 平均タスク年齢 | 未完了は作成→現在、Doneは作成→最終更新の概算。着手→完了の実測時間ではない |
+| 担当者による絞込み・ボードのMarkdown出力 | 割当の見直しや共有に使える。AIの実稼働や残量は測定しない |
 
-ローカル版には独自UI／REST wrapperはありません。[ローカルMVP構成](docs/09-backlog-md-architecture.ja.md)と[OSS選定経緯](docs/oss-reselection-20261011.ja.md)は、その採用時点の説明です。クラウドの候補実装は別ブランチで独立レビュー中です。追加Basic認証は採用しません。
+ここに挙げたものは **OSS／ローカル版の機能** であり、クラウド画面に分析機能を実装済みという意味ではありません。件数は読み込んだ対象に依存し、アーカイブを含む生涯累計とは区別します。
 
-検証記録：[訂正済み検証記録と再接続の未達要件](docs/11-validation-20261011.ja.md)。共通更新手順：[AIの更新プロトコル](docs/10-agent-update-protocol.ja.md)。
+## フェーズ2以降の開発候補
 
-### 使い方（PowerShell）
+一人でも「何が止まっているか」「次のAIセッションをどこへ割り当てるか」が分かれば、分析には意味があります。件数だけでAIの能力や生産性を順位付けすることは目的にしません。
+
+| 候補 | 追加が必要なもの |
+|---|---|
+| フェーズ2：割当・未更新の一覧 | 状態／主担当別のクラウド集計と「最終更新からの時間」。OSSの定義を参考に、対象範囲・閾値・欠損の表示を決める |
+| フェーズ2：状態の滞留・承認待ち時間 | 状態に入った／出た時刻、再開・差戻し・保留を含む信頼できる遷移記録。最終更新時刻だけでは滞留時間を確定できない |
+| フェーズ2：着手→完了時間・完了傾向 | 着手／完了の定義と永続イベント。期間別完了件数、中央値・分布、収集開始日。作成→更新の年齢を実測時間に置き換えない |
+| 後続：AI別の割当・稼働 | 主担当別件数はタスク項目から集計可能。実行時間・成果・失敗には別の実行イベント収集が必要。割当は稼働率の証拠ではない |
+| 後続：残量履歴と配分判断 | 承認された収集経路、観測／リセット時刻、保持方針。鮮度とAntigravity共有プールを維持。保存済みスナップショットだけから消費速度やモデル別枠を推定しない |
+| 後続：AI更新経路・レポート | 認証された更新口、永続的な再送／再試行処理、任意の非公開要約。OSSにMCPがあるだけでクラウドAIがWindowsへ直結するわけではなく、dotはWindows委譲CLI経由を想定 |
+
+現行クラウドの監査記録は最大1,000更新イベントです。移行した履歴テキストと最終更新時刻は、完全な構造化遷移／実行履歴ではありません。必要な観測がない指標は **不明** とし、収集範囲を明示します。過去の滞留時間、AI稼働率、完了トレンドの算出・表示は今回実装していません。優先順位・範囲・費用は次の実装前に別途判断し、新しい有料サービスを前提にしません。
+
+## 今の更新先と反映経路
+
+| 操作 | 実際の保存先 |
+|---|---|
+| 公式ローカルCLI/MCPでタスクを追加・編集 | 共通ローカルMarkdownのみ。ローカルWebボードがそのファイルを監視 |
+| 本人がクラウドのカードを開き、状態（Doneを含む）を保存 | 同一originのPOST /api/tasks→本人認証→バージョン照合付きNeonトランザクション→画面再取得 |
+| クラウドでのタスク新規作成・その他の編集 | 保護されたAPIには作成／更新契約があるが、現行UIで操作できるのは状態編集。認証済みAI更新クライアントや新規作成フォームは未接続 |
+| ブラウザの30秒ごとの再取得 | クラウドDBを読む処理。Windowsファイルの同期ではない |
+
+初回の私的データ取込みは一度限りの移行です。ローカル→Neonへ書く定期同期は本repoに設定されておらず、フェーズ1でも開始していません。その後のローカルCLI更新とWeb表示は異なることがあります。AIへ更新を頼めば自動でクラウドにも書かれる経路はまだ検証済みの運用ではなく、別途実装が必要です。二つの正本を競合させたり、クラウド編集を一括再取込みで上書きしたりしない方針です。
+
+## ローカル版の使い方
 
 ```powershell
-.\scripts\Install-Backlog.ps1                     # 版固定binaryをSHA256検証して .runtime\ へ
-.\scripts\Initialize-DataRoot.ps1                 # 既定: %LOCALAPPDATA%\ai-team-task-dashboard\data（-DataRoot で変更）
-.\scripts\Start-Dashboard.ps1                     # http://127.0.0.1:6420 （--no-open、ブラウザは自分で開く）
-.\scripts\backlog.ps1 task list --plain         # 公式CLIをdata root固定で実行
-node tests\integration.mjs                         # 合成試験（一時rootのみ。結果は results\ に保存）
+.\scripts\Install-Backlog.ps1                 # pinned v1.53.0 binary, SHA256 verified
+.\scripts\Initialize-DataRoot.ps1             # %LOCALAPPDATA%\ai-team-task-dashboard\data
+.\scripts\Start-Dashboard.ps1                 # http://127.0.0.1:6420; --no-open
+.\scripts\backlog.ps1 task list --plain
+.\scripts\backlog.ps1 overview                 # official local statistics TUI
+node tests\integration.mjs                     # synthetic tasks in a temporary root
 ```
 
-data rootはコードrepoやgitワークスペースの外に置く必要があり、該当すると拒否します。既存configは変更しません。
+保存先はコードrepoやGitワークスペースの外に置きます。危険な場所はスクリプトが拒否し、既存設定は保持します。公式v1.53.0ローカルUIは切断／server再起動後、継続更新を戻すため明示的なページ再読込が必要です。上流binary／UIは改変していません。[検証と再接続の制約](docs/11-validation-20261011.ja.md)を参照してください。
 
-ローカル版を選んだ比較記録は **[OSS再選定提案：13候補比較、更新経路、受入試験](docs/oss-reselection-20261011.ja.md)** を参照してください。
+## 設計・確認資料
 
-- 最優先は「AIが更新する → 保存を確認する → 開いた画面へ反映する」の一続きの経路です。人手転記を通常経路にしません。
-- Backlog.mdの公式CLI/MCPと標準Web画面を採用しました。Windowsローカル、共通のタスク保存先、1タスク1主担当を想定します。
-- 利用者別認証/RBAC、古い入力を拒否するCAS、クラウドAIからの実接続などには制約や未検証点があります。標準機能だけで解決済みとは扱いません。
-- 確認済み：ローカル版の合成CLI/MCP/HTTP/WSとheadless Chromeでの実DOM/通信。**標準v1.53.0は切断・server再起動後、継続更新を戻すため明示的ページ再読込が必要です**。health復旧は一度の再取得だけです。上流UI/binaryは改変していません。クラウドAI実接続、自動起動、外部公開は未実施です。
-- クラウド版の全URL保護・本人限定、実DB/TLS/競合/永続化、buildと静的出力、AI更新の認証、再送UX、データ移行は未検証または修正待ちです。保護検証が通るまで実タスクを移送しません。公開GitHubに実タスク・秘密・内部記録は保存しません。
+- [クラウド設計・日本語](docs/12-cloud-architecture.ja.md)／[English](docs/12-cloud-architecture.md)：設計段階の背景資料。deploy前の状況記述は過去の記録であり、現在の完了状況は本READMEを参照。
+- [ローカルMVP構成](docs/09-backlog-md-architecture.ja.md)／[AI更新プロトコル](docs/10-agent-update-protocol.ja.md)。
+- 初期Kanboard資料（docs/01〜08）と[旧例](examples/task-card.md)は失効済みの参考記録で、現行構成やネイティブ形式ではありません。
 
-## 置換済みの初版資料
+2026-10-14に公式tag v1.53.0（source commit fd20f71493fb4eda44b021aa89f257956f17fb71）で確認：
 
-**Kanboard選定は[Backlog.md MVP構成](docs/09-backlog-md-architecture.ja.md)に置換済みです。以下は初版の判断を残した参考記録であり、現行構成・採用決定・構築指示ではありません。** 全面改訂は新案の確認後に行います。
+- [Backlog.md v1.53.0 README](https://github.com/MrLesk/Backlog.md/blob/v1.53.0/README.md)
+- [Official CLI reference](https://github.com/MrLesk/Backlog.md/blob/v1.53.0/CLI-INSTRUCTIONS.md)
+- [Statistics calculation](https://github.com/MrLesk/Backlog.md/blob/v1.53.0/src/core/statistics.ts) / [overview command](https://github.com/MrLesk/Backlog.md/blob/v1.53.0/src/commands/overview.ts)
+- [Official web statistics view](https://github.com/MrLesk/Backlog.md/blob/v1.53.0/src/web/components/Statistics.tsx)
 
-1. [置換済み・要件と画面](docs/01-requirements-and-ui.md)
-2. [置換済み・全体構成](docs/02-architecture.md)
-3. [置換済み・Kanboard選定理由](docs/03-adr-oss-selection.md)
-4. [置換済み・安全設計と承認の境界](docs/04-security-and-approval.md)
-5. [置換済み・データ/API](docs/05-data-and-api.md)
-6. [置換済み・導入段階・費用・移行](docs/06-deployment-and-migration.md)
-7. [置換済み・受入試験・作業順](docs/07-acceptance-and-backlog.md)
-8. [置換済み・公式出典](docs/08-sources.md)
+## 公開リポジトリの範囲
 
-[カード記入例](examples/task-card.md)と[スナップショット例](examples/task-snapshot.json)も旧案の架空データです。Backlog.mdのネイティブ形式や現行のデータ契約ではありません。
-
-## リポジトリの範囲
-
-ローカル起動・更新スクリプト、テスト、現行設計・参考資料・架空例のみです。実タスク、秘密、個人の会話全履歴、上流アプリのコードは含めません。製品をOSSから選ぶことと、このリポジトリ独自の文書・将来の拡張の公開ライセンスは別で、後者は未選定です。
-
-確認日：2026-10-11。製品の対応版・ライセンス・料金条件は導入時に再確認します。製品利用料0円と、ホスティング・保守・電力・既存AI利用料0円は別です。
+コード、設定例、テスト、図、文書のみです。私的タスク状態はローカルのGit外または保護されたクラウドDBに分離し、私的会話・認証資格情報は置きません。Backlog.mdはMITですが、本repo独自の文書／コードのプロジェクトライセンスは未選定です。無料枠は将来のホスティング・保守・既存AI契約の費用ゼロを保証しません。

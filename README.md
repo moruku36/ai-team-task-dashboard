@@ -2,64 +2,94 @@
 
 Language: **English** | [日本語](README.ja.md)
 
-## Current implementation and next design (2026-10-12)
+A personal dashboard for tracking work shared with AI assistants: what is active, awaiting approval, blocked or finished, and whether saved quota information is still usable.
 
-**The official, version-pinned Backlog.md v1.53.0 Windows-local dashboard is running. Private tasks have been imported locally; their contents are absent from this repository. Setup preparation is in progress for the owner-private Vercel + Neon version that can be viewed while the PC is off. The initial design is merged; the UI/API is not deployed and private data is not migrated.** The Neon resource's Free/Available state is confirmed, but its region, project connection and real DB connectivity are unverified. Build and verify access protection with synthetic data only.
+## Phase 1 complete — 2026-10-14
 
-![Current local system and planned private cloud system](docs/images/cloud-architecture.en.svg)
+**The owner signed in, checked the new production UI and accepted Phase 1 as complete.** The Windows-local foundation and the owner-only Vercel + Neon dashboard are implemented. The next phase is a set of development candidates, not an approved implementation schedule.
 
-Start with the **[overall design and Mermaid diagrams](docs/12-cloud-architecture.md)**. The cloud plan uses a new Kanban UI/API and Neon PostgreSQL, rather than hosting Backlog.md itself. It retains the useful status/group/owner organization but does not promise identical UI features. Vercel Authentication with All Deployments is the intended protection; owner-only access across every URL and asset/API route still requires verification. Additional Basic authentication is not adopted. There is no automatic synchronization with the old CLI/MCP store.
+- Task board with six statuses, one primary owner per task, search, details and the current / inventory / completion-history groups.
+- Owner-only sign-in, Vercel protection across all deployments, and private state in Neon PostgreSQL. The cloud board can be viewed while the Windows PC is off.
+- Private task migration with readback verification. Live tasks, histories and credentials are excluded from this public repository.
+- Cloud updates use version checks (CAS) and request replay protection; the UI refetches every 30 seconds and after saves, and shows connection/update times.
+- Compact header, reused local favicon, provider colors and remaining-quota summaries. Details start collapsed and retain state/focus across refresh. Unknown, actual zero and historical reference values are distinct; Antigravity shared pools are separate.
+- Synthetic integration and headless-browser checks, including 15 checks for the final compact UI/build/quota/auth compatibility change. [PR #4](https://github.com/moruku36/ai-team-task-dashboard/pull/4) delivered the production update; owner screen confirmation followed.
 
-[日本語の設計](docs/12-cloud-architecture.ja.md) / [English diagram](docs/images/cloud-architecture.en.svg) / [日本語の図](docs/images/cloud-architecture.svg).
+Saved quota snapshots do **not** imply ongoing collection. Collectors were not restarted by this work; old observations remain references. Automated cloud-AI updates, historical analytics and continuous usage monitoring are not Phase 1 deliverables.
 
-| Current: running | Planned: setup preparation |
+## Foundation: Backlog.md
+
+The adopted OSS is **[Backlog.md](https://github.com/MrLesk/Backlog.md/tree/v1.53.0), by MrLesk**, pinned to v1.53.0 (MIT). Its official Windows executable supports Markdown tasks, a CLI, MCP, a terminal Kanban board, a local web board, search, assignees, labels, priorities, milestones, dependencies and acceptance/DoD checklists. Git is optional through no-git mode. See the [selection record](docs/oss-reselection-20261011.ja.md).
+
+The local installation uses the official CLI/MCP and web UI over a shared no-git data root outside this repository. File watch → WebSocket → UI provides local updates. The cloud version is this repository's own UI/API with Neon as its canonical store; it does not host Backlog.md or inherit every OSS feature. There is **no automatic synchronization with the old CLI/MCP data root**. Existing local scripts operate on the local store.
+
+### What the OSS already offers
+
+The v1.53.0 statistics implementation and official overview command provide a useful local starting point:
+
+| Native capability | Meaning and limit |
 |---|---|
-| Official Backlog.md CLI/MCP and standard UI | New Vercel Kanban UI/API; not a host for Backlog.md itself |
-| Shared no-git Markdown; private tasks imported locally | Neon PostgreSQL as the sole canonical store; no automatic old CLI/MCP sync |
-| Owner views via loopback; PC must run | Verify owner-only Vercel Authentication with All Deployments across all URLs |
-| File watch → WebSocket → standard UI | MVP refetch every 30 seconds and after save; features and interactions are not identical |
+| Status/priority counts and completion percentage | A current snapshot of loaded tasks, not a weekly completion trend |
+| Recent activity | Recently created/updated tasks within seven days; not an execution log |
+| Stale-task suggestions | Unfinished tasks with no update for over 30 days; not time spent in a particular status |
+| Dependency blocking | Unfinished tasks with a loaded, unfinished dependency; separate from this dashboard's manual Blocked status |
+| Average task age | Creation to now for active tasks; creation to latest update for Done tasks. This proxy is not measured start-to-finish cycle time |
+| Assignee filtering and Markdown board export | Helps review workload and share a board; does not measure AI runtime or quota |
 
-The [local MVP architecture](docs/09-backlog-md-architecture.ja.md) and [selection rationale](docs/oss-reselection-20261011.ja.md) describe the existing local implementation, which has no custom UI or REST wrapper. Cloud candidate code is separate and under review; this documentation change contains no candidate implementation.
+These are **OSS/local capabilities**, not analytics already added to the cloud dashboard. Snapshot counts depend on the loaded task set; they should not be treated as lifetime totals across archived data.
 
-Validation: [Corrected validation and known reconnect failure](docs/11-validation-20261011.ja.md).
+## Phase 2 and beyond: candidates
 
-### Usage (PowerShell)
+For one person, analytics can answer “what is stuck?” and “where should the next AI session go?” without turning task counts into a performance ranking.
+
+| Candidate | What would need to be added |
+|---|---|
+| Phase 2: workload and stale-task view | Cloud aggregation by status/primary owner and an explicitly named “time since last update” indicator. Reuse OSS definitions where appropriate; publish scope, threshold and missing-data labels |
+| Phase 2: status dwell and approval wait | Reliable timestamped transitions, including entry/exit, reopen and paused intervals. Latest update time alone cannot establish status dwell |
+| Phase 2: cycle time and completion trends | Agreed start/completion semantics and durable events; per-period completions, median/range and data-coverage dates. Creation-to-update age cannot substitute for actual start-to-completion time |
+| Later: AI assignment and activity | Owner counts are possible from task fields; actual runs, durations, outcomes and failures need separately recorded execution events. Assignment is not proof of activity or utilization |
+| Later: quota history and planning | Authorized collection, observation/reset timestamps and retention rules; preserve freshness and separate Antigravity pools. Saved snapshots cannot establish consumption rates or per-model allocations |
+| Later: controlled AI updates and reporting | An authenticated update path, durable idempotency/retry handling and optional private summaries. Backlog.md MCP availability alone does not connect a cloud assistant to Windows; dot is expected to update through a Windows delegated CLI |
+
+The current cloud audit keeps at most 1,000 mutation events; imported historical text and latest task timestamps are not a complete structured transition/run history. Metrics without the necessary observations must stay **unknown**, with coverage disclosed. No historical durations, AI utilization or completion trend has been calculated or shipped here. Priorities, scope and costs require a separate decision before implementation; no new paid service is assumed.
+
+## Where updates go today
+
+| Action | Actual destination |
+|---|---|
+| Official local CLI/MCP creates or edits a task | Shared local Markdown only; the local web board watches those files |
+| Signed-in owner opens a cloud card and saves its status (including Done) | Same-origin POST /api/tasks → owner authorization → version-checked Neon transaction → cloud refetch |
+| Cloud task creation or broader edits | The protected API has a create/update contract, but the current UI only exposes status editing. An authenticated AI updater or creation form is not wired |
+| Browser's 30-second refresh | Reads the cloud DB; does not read or synchronize Windows files |
+
+The initial private import was a one-time migration. No scheduled local-to-Neon writer is configured in this repository or was started by Phase 1. Later local CLI updates can therefore diverge from the cloud board. Requesting an AI update is not yet a verified automatic cloud-write workflow; that bridge needs a separate implementation. Do not keep two competing canonical stores or repeat a bulk import over cloud edits.
+
+## Local usage
 
 ```powershell
-.\scripts\Install-Backlog.ps1                     # pinned binary, SHA256-verified, into .runtime\
-.\scripts\Initialize-DataRoot.ps1                 # default: %LOCALAPPDATA%\ai-team-task-dashboard\data (-DataRoot to override)
-.\scripts\Start-Dashboard.ps1                     # http://127.0.0.1:6420 (--no-open; open the browser yourself)
-.\scripts\backlog.ps1 task list --plain         # official CLI with the data root pinned
-node tests\integration.mjs                         # synthetic test (temp root only; results saved under results\)
+.\scripts\Install-Backlog.ps1                 # pinned v1.53.0 binary, SHA256 verified
+.\scripts\Initialize-DataRoot.ps1             # %LOCALAPPDATA%\ai-team-task-dashboard\data
+.\scripts\Start-Dashboard.ps1                 # http://127.0.0.1:6420; --no-open
+.\scripts\backlog.ps1 task list --plain
+.\scripts\backlog.ps1 overview                 # official local statistics TUI
+node tests\integration.mjs                     # synthetic tasks in a temporary root
 ```
 
-The data root must be outside the code repository and any git workspace (otherwise refused); existing config is never modified.
+The data root must be outside the code repository and any Git workspace; scripts refuse an unsafe location and preserve existing configuration. The official v1.53.0 local UI requires an explicit page reload after disconnect/server restart to restore ongoing updates; upstream binaries/UI are unmodified. See [validation and reconnect limits](docs/11-validation-20261011.ja.md).
 
-The README and current overall design are available in both languages. Earlier local implementation references are in Japanese.
+## Design and references
 
-- The priority is an end-to-end path: an AI updates a task, storage is verified, and an already-open view reflects the change. Manual transcription is not the normal update path.
-- The implementation uses Backlog.md's official CLI/MCP and standard web UI, a shared local task-data root, and one primary owner per task.
-- Per-user authentication/RBAC, stale-write rejection through CAS, and actual connectivity from cloud AI tools remain constraints or validation items. They are not presented as solved.
-- Local verification includes synthetic CLI/HTTP/WebSocket tests and real DOM/network behavior with headless Chrome. After a disconnect/server restart, the official v1.53.0 UI needs an explicit page reload to restore ongoing updates; health reconnection alone restores one snapshot. No upstream UI/binary patch. Cloud-AI connection, autostart and external deployment remain pending.
-- Cloud protection, real database/TLS/concurrency/durability, build output, AI update authentication, retry UX and migration are not complete. Preserve one canonical store and verify protection before separately authorizing private data transfer. Public repository visibility does not imply publishing live task data.
+- [Cloud architecture — English](docs/12-cloud-architecture.md) / [日本語](docs/12-cloud-architecture.ja.md): design-stage background; its pre-deployment status notes are historical. The completion status above is current.
+- [Local MVP architecture](docs/09-backlog-md-architecture.ja.md) / [AI update protocol](docs/10-agent-update-protocol.ja.md).
+- Earlier Kanboard documents (docs/01–08) and [old examples](examples/task-card.md) are superseded historical material, not the current architecture or native data format.
 
-## Superseded initial documents
+Official sources checked against tag v1.53.0 on 2026-10-14 (source commit fd20f71493fb4eda44b021aa89f257956f17fb71):
 
-**The Kanboard selection is superseded by the [Backlog.md MVP architecture](docs/09-backlog-md-architecture.ja.md). All documents below are historical reference material, not the current architecture, an adoption decision or instructions to build.** Full revisions will follow review of the new proposal.
+- [Backlog.md v1.53.0 README](https://github.com/MrLesk/Backlog.md/blob/v1.53.0/README.md)
+- [Official CLI reference](https://github.com/MrLesk/Backlog.md/blob/v1.53.0/CLI-INSTRUCTIONS.md)
+- [Statistics calculation](https://github.com/MrLesk/Backlog.md/blob/v1.53.0/src/core/statistics.ts) / [overview command](https://github.com/MrLesk/Backlog.md/blob/v1.53.0/src/commands/overview.ts)
+- [Official web statistics view](https://github.com/MrLesk/Backlog.md/blob/v1.53.0/src/web/components/Statistics.tsx)
 
-1. [Superseded: requirements and UI](docs/01-requirements-and-ui.md)
-2. [Superseded: architecture](docs/02-architecture.md)
-3. [Superseded: Kanboard selection ADR](docs/03-adr-oss-selection.md)
-4. [Superseded: security and approval boundaries](docs/04-security-and-approval.md)
-5. [Superseded: data and API concepts](docs/05-data-and-api.md)
-6. [Superseded: deployment and migration](docs/06-deployment-and-migration.md)
-7. [Superseded: acceptance tests and backlog](docs/07-acceptance-and-backlog.md)
-8. [Superseded: official sources](docs/08-sources.md)
+## Repository boundary
 
-The [task card](examples/task-card.md) and [snapshot JSON](examples/task-snapshot.json) are fictional examples from the old proposal. They are not Backlog.md's native format or the current data contract.
-
-## Repository scope
-
-Local launch/update scripts, tests, current design, historical reference documents and fictional examples only. No live task data, secrets, private conversation history or upstream application code is included. Selecting open-source software does not automatically license this repository's original documents or future extensions; that license remains undecided.
-
-Source review date: 2026-10-11. Recheck supported versions, licenses and pricing conditions before installation. Zero software license fees do not imply zero hosting, maintenance, electricity or existing AI subscription costs.
+Public code, configuration examples, tests, diagrams and documentation only. Private task state stays outside Git locally or in the protected cloud database. No private conversations or credentials belong here. Backlog.md is MIT-licensed; this repository's original documents/code have no selected project license yet. Free resource tiers do not guarantee zero future hosting, maintenance or existing AI subscription costs.
