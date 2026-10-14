@@ -1,10 +1,10 @@
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { runInContext, createContext } from 'node:vm';
-import { randomUUID } from 'node:crypto';
-import { createOwnerAuth, readAuthConfig, ownerOnlyValidation, REQUIRED_ENV, AUTH_ROUTES } from '../owner-auth.mjs';
+import { randomUUID, createHash } from 'node:crypto';
+import { createOwnerAuth, readAuthConfig, ownerOnlyValidation, diagnosticValidation, defaultDiagnosticSink, correlationId, REQUIRED_ENV, AUTH_ROUTES } from '../owner-auth.mjs';
 import { createVercelHandler } from '../server.mjs';
 import { FixtureStore } from './fixtures.mjs';
 // IMPORTANT: every "library" below is a MOCK of the Better Auth boundary (getSession / listUserAccounts / node handler).
@@ -95,7 +95,9 @@ test('library configuration (static): single provider, no password/email signup,
     /useSecureCookies: true/, /httpOnly: true/, /secure: true/, /sameSite: 'lax'/, /disableOriginCheck: false/, /accountLinking: \{ enabled: false \}/, /rejectUnauthorized: true/]) assert.match(code, required, String(required));
   assert.doesNotMatch(code, /github|google|discord|apple|twitter|microsoft|genericOAuth|magicLink|anonymous\(/i);
   assert.doesNotMatch(code, /process\.env\.|x-vercel|\bVERCEL\b/); // env is injected; no env-flag or platform-identity shortcuts
-  assert.match(code, /validateUserInfo: ownerOnlyValidation\(config\.ownerSubject\)/);
+  assert.match(code, /validateUserInfo: config\.diagnostic \? diagnosticValidation\(\{ sink \}\) : ownerOnlyValidation\(config\.ownerSubject\)/);
+  assert.match(code, /logger: \{ disabled: true \}/); assert.match(code, /onAPIError: \{ errorURL: config\.origin \+ '\/' \}/); // raw library logger off; auth errors return to the absolute same-origin root (config.origin is https-only and path-free by readAuthConfig)
+  assert.doesNotMatch(code, /errorURL: '\//);
   // validateUserInfo gate (MOCK inputs; the real callback argument shape is unverified): only the owner's Vercel profile.sub may pass.
   const gate = ownerOnlyValidation(OWNER), reject = { error: 'owner_only' };
   assert.equal(await gate({ source: { action: 'create-user', oauth: { providerId: 'vercel', profile: { sub: OWNER } } } }), undefined);
@@ -129,4 +131,101 @@ test('sign-in UI: server-driven state, redirect only to the Vercel authorization
   await el('auth').children[1].onclick(); assert.equal(posts.at(-1)[0], '/api/auth/sign-out');
   status = { ok: true, body: { state: 'forbidden' } }; await runInContext('refreshAuth()', context); assert.match(text(el('auth')), /権限がありません/);
   for (const bad of [{ ok: false, body: {} }, { ok: true, body: { state: 'admin' } }]) { status = bad; await runInContext('refreshAuth()', context); assert.match(text(el('auth')), /認証が利用できません/); }
+});
+
+// ---- Owner-discovery diagnostic (OWNER_VERCEL_SUBJECT absent). All inputs below are fixed synthetic fixtures; mocks are NOT proof of real OIDC. ----
+const noOwner = { ...goodEnv, OWNER_VERCEL_SUBJECT: undefined };
+const STATE = 'STATE_SYNTHETIC_FIXTURE_0001', SUB = 'sub_synthetic_9999';
+const callback = (sub, state, providerId = 'vercel') => [{ source: { action: 'create-user', oauth: { providerId, profile: { sub } } } }, { query: { state } }]; // no defaults: undefined means "absent"
+const fixture = () => callback(SUB, STATE);
+
+test('diagnostic: missing owner never authorizes data/session; strict config by default; matching correlation grants nothing', async t => {
+  assert.equal(readAuthConfig(noOwner).ok, false); // strict by default for existing consumers
+  const relaxed = readAuthConfig(noOwner, { allowMissingOwner: true }); assert.equal(relaxed.ok, true); assert.deepEqual([relaxed.config.diagnostic, relaxed.config.ownerSubject], [true, null]);
+  for (const owner of ['', undefined, null]) assert.equal(readAuthConfig({ ...goodEnv, OWNER_VERCEL_SUBJECT: owner }, { allowMissingOwner: true }).config.diagnostic, true);
+  assert.equal(readAuthConfig({ ...goodEnv, OWNER_VERCEL_SUBJECT: 'a b' }, { allowMissingOwner: true }).ok, false); // present-but-invalid stays rejected
+  assert.equal(readAuthConfig({ ...noOwner, VERCEL_CLIENT_SECRET: undefined }, { allowMissingOwner: true }).ok, false); // every other setting stays required
+  let connects = 0; const calls = [];
+  const lib = mockLib({ calls, session: valid, accounts: [{ providerId: 'vercel', accountId: SUB }, { providerId: 'vercel', accountId: OWNER }] }); // even a "perfect" session must not matter
+  const oa = createOwnerAuth({ env: noOwner, factory: async () => lib, allowOwnerDiscovery: true, diagnosticSink: () => assert.fail('no sink use here') });
+  const base = await serve(t, createVercelHandler({ env: noOwner, connect: async () => { connects++; return new FixtureStore(); }, authorize: oa.authorize, authRoutes: oa.route }));
+  const correlated = { cookie: 'auth_correlation=' + correlationId(STATE), 'x-auth-correlation': correlationId(STATE), authorization: 'Bearer ' + SUB };
+  assert.equal(await oa.authorize({ headers: correlated }), null);
+  for (const path of ['/api/tasks', '/api/quota', '/api/index?dashboard_path=api/tasks']) assert.equal((await fetch(base + path, { headers: correlated })).status, 401, path);
+  assert.equal((await fetch(base + '/api/tasks', { method: 'POST', headers: { ...correlated, Origin: goodEnv.DASHBOARD_ORIGIN, 'Content-Type': 'application/json', 'X-Dashboard-Write': '1' }, body: '{}' })).status, 401);
+  assert.deepEqual([connects, calls.filter(c => c[0] === 'getSession').length], [0, 0]); // no DB, and the session lookup is never consulted while the owner is absent
+  const status = await (await fetch(base + '/api/auth/status', { headers: correlated })).json(); assert.deepEqual(status, { state: 'diagnostic' });
+  assert.equal((await fetch(base + '/api/auth/sign-in/social', { method: 'POST' })).status, 204); // ordinary sign-in route only; no new endpoint
+  assert.equal((await fetch(base + '/api/auth/diagnostic')).status, 404);
+  // Without the explicit opt-in an absent owner stays an unavailable adapter (503), never diagnostic and never authorized.
+  const strict = createOwnerAuth({ env: noOwner, factory: async () => lib }); await assert.rejects(strict.authorize({ headers: {} }));
+  const strictBase = await serve(t, createVercelHandler({ env: noOwner, connect: async () => assert.fail('no DB'), authorize: strict.authorize, authRoutes: strict.route }));
+  for (const path of ['/api/tasks', '/api/auth/status', '/api/auth/sign-in/social']) assert.equal((await fetch(strictBase + path, { method: path.endsWith('social') ? 'POST' : 'GET' })).status, 503, path);
+  // An invalid (present) owner value is not diagnostic even with the opt-in.
+  const invalid = createOwnerAuth({ env: { ...goodEnv, OWNER_VERCEL_SUBJECT: 'a b' }, factory: async () => lib, allowOwnerDiscovery: true }); await assert.rejects(invalid.authorize({ headers: {} }));
+});
+
+test('diagnostic validator: always rejects; sink gets only sub + timestamp + sha256-derived correlation id; invalid inputs emit nothing; default sink prints fixed fields', async () => {
+  const events = [], at = new Date('2026-01-02T03:04:05.000Z'), validate = diagnosticValidation({ sink: e => events.push(e), now: () => at }), reject = { error: 'owner_unconfirmed' };
+  assert.deepEqual(await validate(...fixture()), reject); assert.equal(events.length, 1);
+  assert.deepEqual(Object.keys(events[0]), ['event', 'provider', 'sub', 'at', 'correlationId']);
+  assert.deepEqual(events[0], { event: 'owner_discovery_rejected', provider: 'vercel', sub: SUB, at: '2026-01-02T03:04:05.000Z', correlationId: createHash('sha256').update(STATE).digest('hex').slice(0, 16) });
+  assert.doesNotMatch(JSON.stringify(events), new RegExp(STATE)); assert.ok(Object.isFrozen(events[0]));
+  assert.deepEqual(await validate(...callback(OWNER, STATE)), reject); assert.equal(events.length, 2); // a sub equal to anything (even a would-be owner) is still rejected
+  const before = events.length;
+  const [good] = fixture();
+  for (const args of [callback(SUB, undefined), callback(SUB, ''), callback(SUB, 'short'), callback(SUB, 'bad state with spaces'), callback(SUB, 'S'.repeat(513)), callback(SUB, 7), callback(undefined), callback(''), callback('a b'), callback('s'.repeat(129)), callback(7),
+    callback(SUB, STATE, 'github'), [{ source: { oauth: { providerId: 'vercel', profile: {} } } }, { query: { state: STATE } }], [{ source: { oauth: { providerId: 'vercel' } } }, { query: { state: STATE } }],
+    [{ source: { method: 'email' } }, { query: { state: STATE } }], [good], [good, {}], [good, { query: null }], [{}, { query: { state: STATE } }], [undefined, undefined], []]) {
+    assert.deepEqual(await validate(...args), reject); // invalid input is rejected too
+  }
+  assert.equal(events.length, before, 'no sink output for missing/invalid state or sub');
+  assert.deepEqual(await diagnosticValidation({ sink: () => { throw new Error(SENTINEL); } })(...fixture()), reject); // a failing sink cannot change the decision
+  assert.deepEqual(await diagnosticValidation({ sink: async () => { throw new Error(SENTINEL); } })(...fixture()), reject);
+  const info = mock.method(console, 'info', () => {});
+  try {
+    await diagnosticValidation({ now: () => at })(...fixture()); await diagnosticValidation({ now: () => at })(...callback(SUB, 'bad state'));
+    defaultDiagnosticSink({ event: 'owner_discovery_rejected', provider: 'vercel', sub: SUB, at: '2026-01-02T03:04:05.000Z', correlationId: 'abcdef0123456789', state: STATE, token: SENTINEL, profile: { email: 'x@y.invalid' } });
+    assert.equal(info.mock.callCount(), 2); // only valid inputs print
+    for (const [line] of info.mock.calls.map(c => c.arguments)) { assert.deepEqual(Object.keys(JSON.parse(line)), ['event', 'provider', 'sub', 'at', 'correlationId']); assert.doesNotMatch(line, new RegExp(STATE + '|' + SENTINEL + '|x@y')); }
+  } finally { info.mock.restore(); }
+});
+
+test('confirmed-owner regression: strict sub equality + linked-account check are unchanged even when discovery is allowed; diagnostic UI shows only the correlation id', async t => {
+  const seen = []; const lib = mockLib({ session: valid, accounts: [{ providerId: 'vercel', accountId: OWNER }] });
+  const oa = createOwnerAuth({ env: goodEnv, factory: async config => { seen.push(config); return lib; }, allowOwnerDiscovery: true });
+  const base = await serve(t, wire(goodEnv, async () => mockLib({ session: valid, accounts: [{ providerId: 'vercel', accountId: OWNER }] }), async () => new FixtureStore()));
+  const owner = await oa.authorize({ headers: {} }); assert.deepEqual([owner.verified, owner.role], [true, 'owner']);
+  assert.deepEqual([seen[0].diagnostic, seen[0].ownerSubject], [false, OWNER]); // owner configured -> owner mode, never diagnostic
+  assert.equal((await fetch(base + '/api/tasks')).status, 200);
+  assert.deepEqual(await (await fetch(base + '/api/auth/status')).json(), { state: 'owner' });
+  const viewer = await createOwnerAuth({ env: goodEnv, factory: async () => mockLib({ session: valid, accounts: [{ providerId: 'vercel', accountId: SUB }] }), allowOwnerDiscovery: true }).authorize({ headers: {} });
+  assert.equal(viewer.role, 'viewer'); // a different (e.g. just-discovered) sub is not the owner
+  const gate = ownerOnlyValidation(OWNER); assert.equal(await gate(callback(OWNER, STATE)[0], callback(OWNER, STATE)[1]), undefined);
+  for (const input of [callback(SUB, STATE)[0], callback(OWNER, STATE, 'github')[0], {}]) assert.deepEqual(await gate(input, fixture()[1]), { error: 'owner_only' });
+  // Diagnostic UI (vm harness): status "diagnostic" shows the sign-in button + stored correlation id only; never logged-in/owner wording or the sub.
+  class Element { constructor() { this.children = []; this.textContent = ''; this.value = ''; } append(...c) { this.children.push(...c); } replaceChildren(...c) { this.children = c; } showModal() {} }
+  const text = element => [element.textContent, ...element.children.map(text)].join(' ');
+  const elements = new Map(), el = id => { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id); }, store = new Map(), assigned = [];
+  const stateParam = 'UI_STATE_SYNTHETIC_FIXTURE', expected = createHash('sha256').update(stateParam).digest('hex').slice(0, 16);
+  const context = createContext({ document: { hidden: false, getElementById: el, createElement: () => new Element(), addEventListener() {} }, crypto: { randomUUID, subtle: { digest: async (name, data) => { assert.equal(name, 'SHA-256'); return Uint8Array.from(createHash('sha256').update(data).digest()).buffer; } } },
+    AbortSignal, URL, TextEncoder, Uint8Array, setInterval() {}, sessionStorage: { getItem: k => store.get(k) ?? null, setItem: (k, v) => store.set(k, v), removeItem: k => store.delete(k) }, location: { search: '', assign: url => assigned.push(url) },
+    fetch: async (path, options) => path === '/api/auth/status' ? { ok: true, json: async () => ({ state: 'diagnostic', sub: SUB }) } : options?.method === 'POST' ? { ok: true, json: async () => ({ url: 'https://vercel.com/oauth/authorize?state=' + stateParam }) } : { ok: false, status: 401, json: async () => ({}) } });
+  runInContext(await readFile(new URL('../public/app.js', import.meta.url), 'utf8'), context);
+  await runInContext('refreshAuth()', context);
+  assert.match(text(el('auth')), /診断モード/); assert.match(text(el('auth')), /Vercelでサインイン/); assert.doesNotMatch(text(el('auth')), /サインイン済み|オーナーです|相関ID/); assert.doesNotMatch(text(el('auth')), new RegExp(SUB));
+  store.set('authCorrelation', 'deadbeefdeadbeef'); // stale label from an earlier attempt
+  await el('auth').children[1].onclick(); assert.deepEqual([...store.entries()], [['authCorrelation', expected]]); assert.doesNotMatch(JSON.stringify([...store.entries()]), new RegExp(stateParam)); assert.equal(assigned.length, 1);
+  // Only the exact error=owner_unconfirmed may state the owner-specific rejection (with the matching hash); other errors must not.
+  context.location.search = '?x=error=owner_unconfirmed'; await runInContext('refreshAuth()', context); assert.doesNotMatch(text(el('auth')), /オーナー未確認|相関ID|エラー/); // not an error= parameter at all
+  for (const search of ['?error=access_denied', '?error=owner_unconfirmed_x', '?error=Owner_Unconfirmed', '?error=']) {
+    context.location.search = search; await runInContext('refreshAuth()', context);
+    assert.doesNotMatch(text(el('auth')), /オーナー未確認|相関ID/, search); assert.match(text(el('auth')), /ログインは成立していません/, search); assert.doesNotMatch(text(el('auth')), new RegExp(SUB + '|' + stateParam + '|' + expected));
+  }
+  context.location.search = '?error=owner_unconfirmed'; await runInContext('refreshAuth()', context);
+  assert.match(text(el('auth')), new RegExp('相関ID: ' + expected)); assert.match(text(el('auth')), /ログインもオーナー認定も成立していません/); assert.doesNotMatch(text(el('auth')), new RegExp(SUB + '|' + stateParam));
+  // A sign-in whose authorization URL has no usable state clears the old label: nothing stale is reused.
+  const baseFetch = context.fetch; context.fetch = async (path, options) => path === '/api/auth/status' ? baseFetch(path, options) : { ok: true, json: async () => ({ url: 'https://vercel.com/oauth/authorize?x=1' }) };
+  await runInContext('signIn()', context); assert.equal(store.has('authCorrelation'), false);
+  context.location.search = '?error=owner_unconfirmed'; await runInContext('refreshAuth()', context); assert.doesNotMatch(text(el('auth')), /相関ID: [0-9a-f]/); assert.match(text(el('auth')), /相関IDなし/);
 });

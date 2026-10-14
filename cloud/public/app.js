@@ -169,17 +169,39 @@ async function refreshQuota() {
   } catch { el('quota').replaceChildren(node('p', 'クォータ情報を取得できません(不明)')); }
 }
 // Sign-in panel. State comes from the server (/api/auth/status: anonymous|owner|forbidden); no name, email or account id is ever requested or shown.
-const authLabels = { anonymous: 'サインインしてください', owner: 'サインイン済み', forbidden: 'このアカウントには権限がありません' };
+const authLabels = { anonymous: 'サインインしてください', owner: 'サインイン済み', forbidden: 'このアカウントには権限がありません', diagnostic: 'オーナー未設定(診断モード)' };
+// Diagnostic only: remember a SHA-256-derived label of the authorization-URL state (never the state itself) so a rejected return can be matched to the server log.
+// The label is NOT an authorization proof and nothing about the account is stored or shown.
+function clearCorrelation() { try { sessionStorage.removeItem('authCorrelation'); } catch { /* storage unavailable */ } }
+async function rememberCorrelation(authorizationUrl) {
+  clearCorrelation(); // never reuse an earlier attempt's label, even if this attempt yields none
+  try {
+    const state = new URL(authorizationUrl).searchParams.get('state');
+    if (!state || typeof crypto === 'undefined' || !crypto.subtle || typeof sessionStorage === 'undefined') return;
+    const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(state));
+    const label = [...new Uint8Array(digest)].map(b => b.toString(16).padStart(2, '0')).join('').slice(0, 16);
+    if (/^[0-9a-f]{16}$/.test(label)) sessionStorage.setItem('authCorrelation', label); // only the hash label is stored, never the raw state
+  } catch { clearCorrelation(); }
+}
+// The server returns to the root with ?error=<code>. Only the exact code owner_unconfirmed may be explained as the diagnostic rejection (with its matching label);
+// any other error code is reported neutrally and never claims that reason.
+function returnedAuthError() {
+  const match = /(?:^|[?&])error=([^&#]*)/.exec(String(location.search ?? ''));
+  if (!match) return null;
+  let label = null; try { label = sessionStorage.getItem('authCorrelation'); } catch { /* storage unavailable */ }
+  return match[1] === 'owner_unconfirmed' ? { ownerUnconfirmed: true, label: /^[0-9a-f]{16}$/.test(label ?? '') ? label : null } : { ownerUnconfirmed: false, label: null };
+}
 async function authPost(path, body) {
   const response = await fetch(path, { method: 'POST', credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(15000), headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   return response.json();
 }
 async function signIn() {
+  clearCorrelation(); // stale label from a previous attempt must not survive a new sign-in
   try {
     const result = await authPost('/api/auth/sign-in/social', { provider: 'vercel', callbackURL: '/' });
     // Navigate only to the Vercel authorization endpoint returned by the library.
-    if (typeof result?.url === 'string' && result.url.startsWith('https://vercel.com/')) location.assign(result.url); else throw new Error('Unexpected sign-in response');
+    if (typeof result?.url === 'string' && result.url.startsWith('https://vercel.com/')) { await rememberCorrelation(result.url); location.assign(result.url); } else throw new Error('Unexpected sign-in response');
   } catch { el('auth').replaceChildren(node('span', 'サインインを開始できません')); }
 }
 async function signOut() {
@@ -192,8 +214,13 @@ async function refreshAuth() {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const { state } = await response.json();
     if (!Object.hasOwn(authLabels, state)) throw new Error('Invalid state');
-    const button = node('button', state === 'anonymous' ? 'Vercelでサインイン' : 'サインアウト'); button.onclick = state === 'anonymous' ? signIn : signOut;
-    el('auth').replaceChildren(node('span', authLabels[state]), button);
+    const signingIn = state === 'anonymous' || state === 'diagnostic';
+    const button = node('button', signingIn ? 'Vercelでサインイン' : 'サインアウト'); button.onclick = signingIn ? signIn : signOut;
+    const parts = [node('span', authLabels[state]), button], failure = state === 'diagnostic' ? returnedAuthError() : null;
+    // Only error=owner_unconfirmed gets the diagnostic explanation (+ matching label, when one is stored). Other errors are reported neutrally.
+    if (failure?.ownerUnconfirmed) parts.push(node('span', `診断: サインインは「オーナー未確認」のため拒否されました。ログインもオーナー認定も成立していません。${failure.label ? `相関ID: ${failure.label}` : '(相関IDなし)'}`));
+    else if (failure) parts.push(node('span', 'サインインは完了しませんでした(エラー)。ログインは成立していません。'));
+    el('auth').replaceChildren(...parts);
   } catch { el('auth').replaceChildren(node('span', '認証が利用できません')); }
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { refresh(); refreshQuota(); } });

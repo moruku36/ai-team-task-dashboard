@@ -104,7 +104,8 @@ export function createVercelHandler({ connect = connectStore, env = process.env,
   };
 }
 // Production entry: the real owner adapter is created LAZILY per process; missing settings -> 503 without any DB/network access.
-const ownerAuth = createOwnerAuth();
+// allowOwnerDiscovery: with OWNER_VERCEL_SUBJECT absent the ordinary sign-in flow runs as a diagnostic that always rejects (no session, no data access).
+const ownerAuth = createOwnerAuth({ allowOwnerDiscovery: true });
 export default createVercelHandler({ authorize: ownerAuth.authorize, authRoutes: ownerAuth.route });
 // The local entry has no built-in auth either: without an injected `authorize` it denies every data request (no bypass flag).
 export async function startLocalServer(port = Number(process.env.PORT ?? 6422), { authorize, quotaStore } = {}) {

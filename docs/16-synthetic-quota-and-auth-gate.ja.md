@@ -163,6 +163,17 @@
 - 前回提示のSHA(`account.ts` `0b5ff1bb…`、`vercel.ts` `776d1028…`)は **default branch のメタデータであり、固定した 1.7.7 リリースの証明ではない**。
 **現状**: 実プロバイダのログイン/OIDC、実DB、Neon、実Cookie、Vercel rewrite/Functions、デプロイ(`vercel.json` は未デプロイ)はすべて**未実施・保留**。本番認証アダプタは**コードのみ(未検証)**で、人間の秘密入力・Vercel App登録・DB準備後に実受け入れが必要。
 
+### 8.9 コールバック診断モード(`OWNER_VERCEL_SUBJECT` 未設定時)— コードのみ・実環境未検証
+**目的**: オーナーのVercel `sub` を人間が確認できるよう、通常のBetter Auth Vercelサインイン/コールバックを**必ず拒否する診断**として動かす。認可は一切付与しない。
+**変更ファイル**: `cloud/owner-auth.mjs`(診断構成・`diagnosticValidation`・既定sink・logger無効化・`onAPIError.errorURL`)、`cloud/server.mjs`(本番入口で `allowOwnerDiscovery: true` を明示)、`cloud/public/app.js`(相関IDの保存/表示)、`cloud/tests/owner-auth.test.mjs`(診断テスト追加)。`index.html`/`style.css`/`vercel.json`/クォータ・タスク処理は**変更なし**(新ルート・新エンドポイントなし)。
+**構成**: `readAuthConfig` は**既定で厳格**(既存利用側は不変)。`readAuthConfig(env, {allowMissingOwner:true})` のときだけ、`OWNER_VERCEL_SUBJECT` が**完全に未設定(undefined/null/空)**で、かつ他の必須設定がすべて有効な場合に限り `{diagnostic:true, ownerSubject:null}` を返す。**値はあるが不正**な場合は診断にならず不可。`createOwnerAuth` は `allowOwnerDiscovery:true` を渡した場合のみ診断構成を許可(未指定なら未設定オーナーは従来どおり503)。
+**認可の境界(診断中)**: `authorize()` は常に `null`(セッション参照もライブラリ呼び出しもしない)→ `/api/tasks`・`/api/quota`・POSTは401、DBは接続しない。相関ID/Cookie/ヘッダが一致しても**何も付与しない**。`/api/auth/status` は `{state:'diagnostic'}` とサインインボタンのみ(公開オリジンはexact same origin、Vercel外側保護は既存のまま。バイパス・既定オーナーなし)。
+**検証フック**: `user.validateUserInfo(data, ctx)`(コールバックの `parseState`・`getUserInfo` の後、user/account/session作成の**前**)は診断では**常に `{error:'owner_unconfirmed'}` で拒否**。参照するのは `source.oauth.providerId==='vercel'` と `source.oauth.profile.sub`(`/^[A-Za-z0-9_-]{6,128}$/`)、`ctx.query.state`(`/^[A-Za-z0-9_.~-]{8,512}$/`)のみ。
+**sink出力の境界**: 注入可能なsinkへ渡すのは固定フィールドのみ — `event`(`owner_discovery_rejected`)、`provider`(`vercel`)、`sub`、`at`(ISO時刻)、`correlationId`(`state` のSHA-256先頭16桁hex)。`state`/`code`/`verifier`/トークン/Cookie/プロファイル/name/email/env/エラーオブジェクトは**渡さず・出力しない**。`state` または `sub` が無い/不正なら**拒否のみでsink出力なし**。sinkが例外を投げても判定は変わらない。既定sinkは上記5項目だけを `console.info(JSON)` に出力(非秘密のsubはプライベートなサーバーログ限定。データAPI・URLクエリ・レスポンスには出さない)。Better Authの生ロガーは `logger.disabled:true` で無効化(プロバイダエラーの漏えい防止)。エラー復帰は既存の通常コールバックと `onAPIError.errorURL` は相対 `/` ではなく**絶対HTTPSの `config.origin + '/'`**(`readAuthConfig` が https・パスなしのexact originのみ許可)で、コールバックのエラー復帰先を同一オリジンのルートに一意化。
+**UI(相関ID)**: サインイン開始時にまず保存済みの相関IDを**削除**(古い試行の再利用禁止)。ライブラリが返した認可URLの `state` をWeb Cryptoでハッシュし、**ハッシュ16桁のみ**(生stateは保存しない)を `sessionStorage` に保存してからリダイレクト。state/ダイジェストが得られなければ保存せず削除済みのまま。ルートに戻った時、**クエリが厳密に `error=owner_unconfirmed` のときだけ**「サインインは『オーナー未確認』のため拒否された。ログインもオーナー認定も成立していない」という説明と一致する相関IDを表示(IDが無ければ「相関IDなし」)。それ以外の `error=`(例: `access_denied`)は理由を断定しない中立表示(「サインインは完了しませんでした。ログインは成立していません」)で、相関IDも出さない。ライブラリが実際に返す `error` コード値は**未検証**(一致しなければ中立表示になる=フェイルセーフ)。診断中の `/api/auth/status` は引き続き全データ認可を拒否。**実際のsubは表示しない**。相関IDは**認可の証明ではない**(ログ照合用ラベル)。
+**確認不能/未検証(重要)**: ①通常のOAuthでは検証テーブルのstateレコードが必要になる場合があり、DB/認証スキーマの準備が前提。②認証スキーマ(`auth-schema.prep.sql`)・インストール済みSDK・`validateUserInfo` の引数形(`(data, ctx)`, `ctx.query.state`)・`onAPIError.errorURL`・`logger.disabled` の実行時挙動は**未検証**(キー不一致なら診断出力なしで常に拒否=フェイルクローズ)。③実ログイン/OIDC/DB/Cookie/Vercel rewriteは**未実施**。④モックテストは実OIDCの証明ではない。
+**デプロイはブロック中**: オーナー値の保存(`OWNER_VERCEL_SUBJECT` を人間が設定)と認証スキーマの検証が済むまでデプロイしない。診断で得たsubは、人間が確認してから設定する(推測のREST user-idマッピングはしない)。確認済みオーナーモードの厳格なsub一致+リンク済みアカウント確認は不変。
+
 ### 8.6 認証関連で残る未実装/未検証
 - 実プロバイダ・実ログイン・実DB・実Cookie・実Vercel rewrite/Functions挙動の受け入れ(すべて未実施)。
 - 認証テーブルのmigration(未実行、列定義は未検証)、`pg` の既存ロック方針と認証テーブルの併用、pgロック(クォータ取り込み)未実装。
