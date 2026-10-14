@@ -88,3 +88,11 @@ test('historical percentage and reset use the same reference row', () => {
   assert.match(text(panel.children[0]), /5h 23% reference/);
   assert.ok(text(panel.children[0]).includes(`参考 ${stampJst} JST`));
 });
+
+test('an unreported five-hour window stays unknown even when its age is unavailable', () => {
+  const { render } = harness();
+  const panel = render(quota([card({status:'partial',current_rows:[row({status:'not_reported',stale:true,remaining_percent:null,observed_at:null,reset_at:null,fresh_until:null})]})]));
+  const window = panel.children[0].children[0].children.find(c=>c.className==='quota-rates').children[0];
+  assert.equal(window.className,'quota-window unknown');
+  assert.match(text(window),/5h \?.*リセット: 未取得.*観測: 未確認/);
+});

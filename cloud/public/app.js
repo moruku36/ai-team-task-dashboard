@@ -201,7 +201,7 @@ function renderQuota(quota) {
         const past = card?.last_known_rows.filter(row => row.period === period && (row.shared_pool ?? null) === pool) ?? [];
         const reference = !valid && past.length === 1 && quotaPercent(past[0].remaining_percent) ? past[0] : null;
         const value = valid ? row.remaining_percent : reference ? reference.remaining_percent : null;
-        const state = valid ? 'current' : reference ? 'reference' : row && (row.stale || row.reset_passed || Date.parse(row.fresh_until) < Date.now() || Date.parse(row.reset_at) <= Date.now()) ? 'stale' : 'unknown';
+        const state = valid ? 'current' : reference ? 'reference' : row?.status === 'not_reported' ? 'unknown' : row && (row.stale || row.reset_passed || Date.parse(row.fresh_until) < Date.now() || Date.parse(row.reset_at) <= Date.now()) ? 'stale' : 'unknown';
         states.push(state);
         const window = node('span', `${period === 'five_hour' ? '5h' : 'Weekly'} ${value === null ? '?' : `${Number(value.toFixed(1))}%`}${reference ? ' reference' : ''}`, 'quota-window ' + state);
         const shown = valid ? row : reference ?? row;
