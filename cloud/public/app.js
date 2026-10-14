@@ -88,7 +88,7 @@ async function refresh() {
     if (generation !== readGeneration || busy) return;
     if (!validSnapshot(next) || !advancesSnapshot(next)) throw new Error('Invalid or older snapshot');
     snapshot = next; online = true;
-    el('connection').textContent = '接続中'; el('times').textContent = `最終取得: ${time(snapshot.observedAt)} · 30秒ごとに確認`;
+    el('connection').textContent = '接続中'; el('times').textContent = `タスク一覧の同期: ${time(snapshot.observedAt)} · 30秒ごとに表示を確認`;
     el('notice').textContent = ''; render();
     if (selected && !pendingRequests.has(selected.id)) {
       const current = snapshot.tasks.find(task => task.id === selected.id);
@@ -99,7 +99,7 @@ async function refresh() {
     if (generation !== readGeneration || busy) return;
     online = false; el('connection').textContent = '接続できません';
     // Only claim "last received" when an accepted snapshot actually exists; otherwise nothing was ever received.
-    if (fetched()) { el('times').textContent = `最終取得: ${time(snapshot.observedAt)} · 古い可能性があります(再取得できていません)`; el('notice').textContent = '表示は最後に取得した状態で、古い可能性があります。更新ボタンで再接続できます。'; }
+    if (fetched()) { el('times').textContent = `タスク一覧の同期: ${time(snapshot.observedAt)} · 古い可能性があります(再取得できていません)`; el('notice').textContent = '表示は最後に取得した状態で、古い可能性があります。更新ボタンで再接続できます。'; }
     else { el('times').textContent = '未取得'; el('notice').textContent = 'まだタスクを取得できていません(0件ではありません)。更新ボタンで再接続できます。'; }
   }
   el('save').disabled = busy || !online || !selected || selectedStale;
@@ -172,6 +172,14 @@ function quotaResetText(card, row, historical = false, now = Date.now()) {
   const minutes = Math.ceil((reset - now) / 60000), days = Math.floor(minutes / 1440), hours = Math.floor(minutes % 1440 / 60);
   return `${stamp}・あと${days ? days + '日' : ''}${hours ? hours + '時間' : ''}${minutes % 60}分`;
 }
+function quotaObservedText(card, row, historical, provider) {
+  const observed = row?.observed_at;
+  const collected = historical ? card?.last_success_collected_at : card?.collected_at;
+  const value = validTime(observed) ? observed : provider === 'antigravity' && row && validTime(collected) ? collected : null;
+  if (!value) return '観測: 未確認';
+  const stamp = new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(Date.parse(value));
+  return `${validTime(observed) ? '観測' : '収集'}: ${stamp} JST${historical ? '・参考値' : ''}`;
+}
 function renderQuota(quota) {
   const restoreFocus = Boolean(quotaSummary && document.activeElement === quotaSummary);
   quotaDetailsOpen = quotaDisclosure?.open ?? quotaDetailsOpen;
@@ -181,7 +189,7 @@ function renderQuota(quota) {
     const cards = quota.usage?.cards.filter(card => card.provider === provider) ?? [];
     const card = cards.length === 1 ? cards[0] : null;
     const item = node('section', '', `quota-summary-card provider-${provider}`);
-    item.append(node('h3', provider === 'antigravity' ? 'Antigravity' : quotaProviders[provider]), node('small', 'Remaining'));
+    item.append(node('h3', provider === 'antigravity' ? 'Antigravity' : quotaProviders[provider]), node('small', provider === 'antigravity' ? 'Remaining · Antigravity内の共有枠' : 'Remaining · 本人の契約枠'));
     for (const pool of provider === 'antigravity' ? ['gemini_shared', 'claude_gpt_shared'] : [null]) {
       if (pool) item.append(node('strong', pool === 'gemini_shared' ? 'Gemini shared' : 'Claude / GPT shared'));
       const rates = node('div', '', 'quota-rates');
@@ -196,7 +204,9 @@ function renderQuota(quota) {
         const state = valid ? 'current' : reference ? 'reference' : row && (row.stale || row.reset_passed || Date.parse(row.fresh_until) < Date.now() || Date.parse(row.reset_at) <= Date.now()) ? 'stale' : 'unknown';
         states.push(state);
         const window = node('span', `${period === 'five_hour' ? '5h' : 'Weekly'} ${value === null ? '?' : `${Number(value.toFixed(1))}%`}${reference ? ' reference' : ''}`, 'quota-window ' + state);
-        window.append(node('small', quotaResetText(card, row ?? reference, !row && Boolean(reference)), 'quota-reset'));
+        const shown = valid ? row : reference ?? row;
+        window.append(node('small', quotaResetText(card, shown, Boolean(reference)), 'quota-reset'),
+          node('small', quotaObservedText(card, shown, Boolean(reference), provider), 'quota-observed'));
         rates.append(window);
       }
       item.append(rates);
@@ -204,6 +214,7 @@ function renderQuota(quota) {
     }
     grid.append(item);
   }
+  grid.append(node('p', '各枠の日時は残量の観測・収集時刻です。表示の更新だけでは残量を再取得しません。ChatGPTの単独利用枠は未取得です。', 'quota-summary-note'));
   const details = node('details', '', 'quota-details'); details.open = quotaDetailsOpen;
   const summary = node('summary', 'Quota details');
   const content = node('div', '', 'quota-detail-grid');
