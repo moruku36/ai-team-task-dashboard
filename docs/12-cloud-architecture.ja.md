@@ -1,6 +1,8 @@
 # 12. PC停止中にも使えるタスクダッシュボードの全体設計
 
-更新日：2026-10-12。**このページはクラウド版の設計です。Vercel／Neonの実構築は、設計レビューとマージの後に行います。** 公開リポジトリには実タスク・秘密・私的な記録を入れません。
+言語：**日本語** | [English](12-cloud-architecture.md)
+
+更新日：2026-10-12。**このページはクラウド版の設計です。初版設計はマージ済みで、現在は導入準備中です。NeonリソースのFreeプラン・Available状態は確認済みですが、地域・プロジェクト接続・実DB疎通は未確認です。画面／APIは未deployです。** 公開リポジトリには実タスク・秘密・私的な記録を入れません。
 
 ## まず押さえること
 
@@ -16,7 +18,7 @@
 | 閲覧 | loopback。PCとローカルserverの起動が必要 | Vercelの本人認証後に閲覧。PCの起動に依存しない |
 | 画面への反映 | file watch→WebSocket→標準画面の再取得 | MVPは可視時30秒ごとの再取得＋保存後の再取得 |
 | 古い入力 | 公式lockは期待revisionのCASではない | タスクの期待版番号が不一致なら409で拒否する設計 |
-| 公開状況 | ローカルのみ。私的データは公開しない | 未構築・未deploy・未移行。一般公開はしない |
+| 公開状況 | ローカルのみ。私的データは公開しない | 導入準備中。画面/API未deploy・実データ未移行。一般公開はしない |
 
 ローカル版の詳細は[Backlog.md MVP構成](09-backlog-md-architecture.ja.md)、既知の再接続制限は[検証記録](11-validation-20261011.ja.md)を参照してください。
 
@@ -24,7 +26,7 @@
 
 ![現在のWindows版と計画中のVercel・Neon版。移行後はNeonだけを正本にする。](images/cloud-architecture.svg)
 
-[静的図を大きく開く](images/cloud-architecture.svg)。青い実線は現在、紫の実線はクラウドの設計、点線は承認後の移行または未確定の接続です。図に実タスクや資格情報は含みません。
+[日本語の静的図](images/cloud-architecture.svg)／[English diagram](images/cloud-architecture.en.svg)。青い実線は現在、紫の実線はクラウドの設計、点線は承認後の移行または未確定の接続です。図は目標構成であり、リソース接続・稼働済みの証明ではありません。実タスクや資格情報は含みません。
 
 GitHubで拡大・追跡しやすいMermaid版：
 
@@ -37,7 +39,7 @@ flowchart TB
     WATCH --> LUI["WebSocket → 標準 Backlog.md UI"]
     LUI --> LOCALUSER["本人が loopback で閲覧／PC起動が必要"]
   end
-  subgraph CLOUD["計画：Vercel + Neon／未構築"]
+  subgraph CLOUD["計画：Vercel + Neon／画面・API未deploy"]
     OWNER["本人のブラウザー"] --> GATE["Vercel Authentication／All Deploymentsを要検証"]
     GATE --> STATIC["filesystem優先の静的配信／出力は配信資産だけ"]
     STATIC --> UI["新しい Kanban UI"]
@@ -73,9 +75,9 @@ MVPは可視時に30秒間隔で最新データの取得を試みる設計です
 
 [Vercel Authentication](https://vercel.com/docs/deployment-protection/methods-to-protect-deployments/vercel-authentication)は、権限を持つteam/project memberやaccess group、明示的にアクセスを許可された人なども通過できます。「ログイン済み」だけで「本人だけ」とは限りません。対象プロジェクトのメンバー・アクセス許可を本人だけに限定し、本人以外のmember／access group／外部アクセス許可、共有リンク、保護bypass、Trusted Sources、保護例外がないことを確認します。設定の値や環境変数だけで保護を証明せず、Production／Preview／生成URL／独自domainのすべてと各ページ・資産・APIを未認証で試験します。
 
-認証はVercel Authenticationというアプリの外側の境界に置き、API側の入力検証・版番号チェックは別の責務です。業務handlerに独自の認証判定は追加しません。呼出側が自由に送れる「認証済み」「本人メール」や`x-vercel-*`ヘッダー、`VERCEL=1`などの環境変数を本人認証の根拠にしません。DB接続情報はサーバー側の秘密環境変数だけに置き、ブラウザーへ返しません。**Vercel保護を無効化すると画面・APIが露出し得ます。アプリがその変更を検知して自動閉鎖する保証はしません。** 設定欠落やDB接続失敗時の503は認証の代替ではありません。
+認証はVercelというアプリの外側の境界に置き、業務handlerに独自の認証判定は追加しません。API側の入力検証・版番号チェックは別の責務です。呼出側が自由に送れる「認証済み」「本人メール」や`x-vercel-*`ヘッダー、`VERCEL=1`などの環境変数を本人確認の根拠にしません。DB接続情報はサーバー側の秘密環境変数だけに置き、ブラウザーへ返しません。**Vercel保護を無効化すると画面・APIが露出し得ます。アプリの自動閉鎖保証はありません。** DB／必要設定欠落・接続失敗時の503は認証の代替ではありません。
 
-導入ゲートはcontrol planeの `ssoProtection.deploymentType=all` と本人以外のアクセス／共有／例外／bypass／Trusted Sourcesなしの確認、および全URL・資産・API・直接Function・POSTの未認証拒否試験です。ブラウザーPOSTはOrigin必須・設定したoriginと完全一致で検証しますが、Origin単独では本人確認になりません。
+導入時はcontrol planeの `ssoProtection.deploymentType=all` とアクセス範囲を確認し、全URL・資産・API・直接Function・POSTの未認証拒否を試験します。ブラウザーPOSTはOrigin必須・設定したoriginと完全一致で検証しますが、Origin単独では本人確認になりません。
 
 ### 静的配信も保護の対象にする
 
@@ -119,7 +121,7 @@ catch-all rewriteだけでは、先に見つかった静的ファイルの配信
 
 ## 無料枠と制約
 
-追加の有料契約・カード登録・有料upgrade・自動課金は行いません。2026-10-12に、接続先のVercelはHobby active、Neon Marketplaceは`free_v3`、`paymentMethodRequired:false`、無料枠超過時は制限／休止で自動有料化なしと確認されています。これは確認時点の条件で、永久保証ではありません。構築時に再確認し、料金ページの古い数値を固定しません。
+追加の有料契約・カード登録・有料upgrade・自動課金は行いません。2026-10-12の読取りではVercel Hobby activeと、Neon Marketplaceの`free_v3`、`paymentMethodRequired:false`、無料枠超過時の制限／休止・自動有料化なしを確認しました。その後、NeonリソースのPlan FreeとStatus Availableを確認しました。地域・Vercelプロジェクト接続・実DB疎通は未確認で、Free／Availableだけから接続完了とは判断しません。構築時に再確認し、料金ページの古い数値を固定しません。
 
 [Vercel Hobby](https://vercel.com/docs/plans/hobby)は個人・非商用用途限定です。私的な本人専用でも事業利用なら条件確認が必要で、公開repoがOSSであることだけで適格とは判断しません。無料条件に合わない場合は構築を止め、追加費用なしの代替を検討します。無料枠の停止は「PC停止中でも常に利用できる」という保証を弱めます。
 
@@ -127,20 +129,22 @@ Vercel／Neonを作る際の規約と連携、DB接続資格情報は構築段�
 
 ## 実装状況と未検証事項
 
-全体設計は文書と図だけのPR #2でmainへ反映済みです。この実装候補は別ブランチで検証中であり、本番完成ではありません。候補は合成データのみで以下を試験しました。
+このPRは文書と図だけです。別ブランチにUI/APIの候補がありますが、独立レビュー中であり、本番完成ではありません。候補は合成データのみで以下を試験しました。
 
 | 種類 | 確認できたこと | 保証していないこと |
 |---|---|---|
-| loopback実HTTP＋test用ファイル保存 | 状態4段階、版の競合・再送、サーバー再作成後の保持、設定欠落503、厳密Origin | 実PostgreSQL、Vercel Authentication |
+| loopback実HTTP＋test用ファイル保存 | 状態4段階、版の競合・再送、サーバー再作成後の保持、設定欠落503・厳密Origin | 実PostgreSQL、Vercel Authentication |
 | 模擬Postgres client | 同一clientでのlock／commit／rollback呼出し | DBの実ロック、別instance同時更新、TLS接続 |
 | 模擬request／response | platform相当のbody解析済み入力とrewriteの経路 | Vercelのbuild・配置・実routing |
 | loopback実HTTP＋模擬DOM | app.jsの一覧反映・文字表示・切断表示・復旧取得 | 実ブラウザーの表示品質・モバイル操作・視覚QA |
+| loopback実HTTP＋模擬DB接続／合成store | 本番入口のstore配線・接続失敗503、ローカルの合成データ限定とloopback起動 | 実DB接続、外側認証、実データ |
+| ローカルfile build | HTML／JS／CSSだけの明示出力先、未知ファイルの拒否 | Vercelのpackaging・配置・全URL保護 |
 
-本番で未検証なのは、Vercelの全URL／直接Function／POSTの保護と本人限定、AI更新の認証経路、依存取得と`pg`のlockfile、buildと静的assetsだけの出力、実DB／TLS／別接続同時更新／commit後永続化／backup、私的データの項目対応・移行、実画面の操作です。保護の無効化に対するアプリの自動閉鎖は採用せず、Vercelの保護設定を維持する運用に依存します。
+本番で未検証なのは、Vercelの全URL／直接Function／POSTの保護と本人限定、AI更新の認証経路、依存取得と`pg`のlockfile、Vercel buildと静的assetsだけの出力、実DB／TLS／別接続同時更新／commit後永続化／backup、私的データの項目対応・移行、実画面の操作です。保護無効化時のアプリ自動閉鎖は採用せず、Vercel保護設定の維持に依存します。
 
-独立レビューでは、カードを再表示すると保留中の要求IDが消える再送UXの問題が実証されました。候補をタスク別Mapの保持に修正し、書込み503・commit後ACK消失・他タスク操作・再表示を経ても同じID／本文で再送する合成HTTP／模擬DOM試験が合格しました。実ブラウザー操作は未確認で、Mapはページ全体のreload／タブ終了後には保持されません。上の再送表は目標設計であり、完全な中断復旧の保証ではありません。
+独立レビューで実証されたカード再表示時の要求ID消失は、別ブランチの候補でタスク別Mapにより修正しました。書込み503・commit後ACK消失・他タスク操作・再表示後にも同じID／本文で再送する合成HTTP／模擬DOM試験は合格しています。実ブラウザーは未確認で、Mapはページ全体のreload／タブ終了後には保持されません。上の再送表は目標設計であり、完全な中断復旧の保証ではありません。
 
-設計時の候補ローカル試験は5 PASS。修正後の現候補は12 PASSで、通常の本番入口の模擬DB配線、設定欠落／接続失敗503、厳密Origin、loopback合成起動、境界とUI再送を含みます。別の独立合成レビューは8 PASS／1 SKIPで、その実HTTPはEACCESにより実行できず、実DBもありません。これらを足して本番の合格件数としたり、実Vercel認証・実DBの検証済みと扱ったりしません。導入ゲートを通るまで候補の稼働・実移送は行いません。
+設計時の候補ローカル試験は5 PASS、修正後は12 PASSです。別の独立合成レビューは8 PASS／1 SKIPで、その実HTTPはEACCESにより実行できず、実DBもありません。これらを足して本番の合格件数としたり、実Vercel認証・実DBの検証済みと扱ったりしません。導入ゲートを通るまで候補の稼働・実移送は行いません。
 
 既に再現したnpm取得のTLS失敗は、検証を弱めて回避しません。同条件の取得試行を繰り返さず、依存を安全に取得できる環境が決まるまで構築の阻害要因として残します。別ブランチの候補コード・内部レビュー記録・私的テスト結果は、この文書PRに混ぜません。
 
@@ -155,4 +159,4 @@ scripts/             現在の公式Backlog.mdローカル起動・更新
 docs/                現行／計画の設計と公開可能な図
 ```
 
-関連資料：[日本語README](../README.ja.md)／[ローカルMVP](09-backlog-md-architecture.ja.md)／[AI更新プロトコル](10-agent-update-protocol.ja.md)／[既知の制限](11-validation-20261011.ja.md)。
+関連資料：[日本語README](../README.ja.md)／[English README](../README.md)／[English design](12-cloud-architecture.md)／[ローカルMVP](09-backlog-md-architecture.ja.md)／[AI更新プロトコル](10-agent-update-protocol.ja.md)／[既知の制限](11-validation-20261011.ja.md)。
