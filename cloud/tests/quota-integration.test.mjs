@@ -36,8 +36,8 @@ test('unauthenticated, rejected, errored and non-owner GET/POST fail closed with
       assert.equal(response.status, expected, `${method} ${path}`); assert.equal(response.headers.get('cache-control'), 'no-store'); assert.doesNotMatch(await response.text(), /SECRET_SENTINEL/);
     }
     assert.deepEqual([store.reads, store.writes, quotaStore.reads], [0, 0, 0]);
-    // The 3 static assets (no data) load without a session so the sign-in UI is reachable; still no storage access.
-    for (const path of ['/', '/app.js', '/style.css']) assert.equal((await fetch(a.url + path)).status, 200);
+    // The 4 static assets (no data) load without a session so the sign-in UI is reachable; still no storage access.
+    for (const path of ['/', '/app.js', '/style.css', '/favicon.png']) assert.equal((await fetch(a.url + path)).status, 200);
     assert.deepEqual([store.reads, store.writes, quotaStore.reads], [0, 0, 0]);
   }
 });
@@ -149,7 +149,7 @@ test('existing /api/tasks wire DTO, CAS and idempotency are unchanged when quota
   } finally { await a.close(); }
 });
 
-test('UI shows current/stale/reference/unknown with distinct timestamps; failure and malformed data are never shown as current; asset allowlist stays 3', async () => {
+test('UI shows current/stale/reference/unknown with distinct timestamps; failure and malformed data are never shown as current; asset allowlist stays 4', async () => {
   class Element { constructor() { this.children = []; this.textContent = ''; this.value = ''; } append(...c) { this.children.push(...c); } replaceChildren(...c) { this.children = c; } showModal() {} }
   const text = element => [element.textContent, ...element.children.map(text)].join(' ');
   const at = minutes => new Date(Date.now() - minutes * 60000).toISOString(), live = at(0.5);
@@ -168,7 +168,7 @@ test('UI shows current/stale/reference/unknown with distinct timestamps; failure
     mode = 'down'; await runInContext('refreshQuota()', context); assert.match(text(el('quota')), /取得できません/); assert.doesNotMatch(text(el('quota')), /最新|Codex/);
     mode = 'live'; await runInContext('refreshQuota()', context); mode = 'bad'; await runInContext('refreshQuota()', context); assert.match(text(el('quota')), /取得できません/); assert.doesNotMatch(text(el('quota')), /最新/);
   } finally { await a.close(); }
-  assert.deepEqual([...assets].sort(), ['app.js', 'index.html', 'style.css']);
+  assert.deepEqual([...assets].sort(), ['app.js', 'favicon.png', 'index.html', 'style.css']);
   assert.match(await readFile(new URL('../public/index.html', import.meta.url), 'utf8'), /id="quota"/);
   const config = JSON.parse(await readFile(root('vercel.json'), 'utf8'));
   assert.deepEqual(config.rewrites.map(r => r.source), ['/api/tasks', '/api/quota', '/api/auth/status', '/api/auth/sign-in/social', '/api/auth/callback/vercel', '/api/auth/sign-out']);

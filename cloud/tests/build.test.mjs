@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, readFile, readdir, rm } from 'node:fs/promis
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { build, assets } from '../build.mjs';
-test('static output contains only three allowlisted assets; unexpected files fail build', async t => {
+test('static output contains only four allowlisted assets including favicon; unexpected files fail build', async t => {
   const root = await mkdtemp(join(tmpdir(), 'dashboard-build-synthetic-')); t.after(() => rm(root, { recursive: true, force: true }));
   await mkdir(join(root, 'cloud', 'public'), { recursive: true });
   for (const name of assets) await writeFile(join(root, 'cloud', 'public', name), `synthetic-${name}`);

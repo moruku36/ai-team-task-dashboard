@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile, readdir, lstat } from 'node:fs/promises';
 import { resolve, join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-export const assets = ['index.html', 'app.js', 'style.css'];
+export const assets = ['index.html', 'app.js', 'style.css', 'favicon.png'];
 export async function build(root = resolve(dirname(fileURLToPath(import.meta.url)), '..')) {
   for (const directory of [root, join(root, 'cloud'), join(root, 'cloud', 'public')]) {
     const info = await lstat(directory);

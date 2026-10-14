@@ -148,13 +148,72 @@ function validQuota(value) {
   return value && validTime(value.servedAt) && Math.abs(Date.now() - Date.parse(value.servedAt)) <= 60000 &&
     Array.isArray(value.entries) && value.entries.length <= 6 && value.entries.every(validQuotaEntry);
 }
+// A successful response does not renew a saved observation or a reset window.
+let quotaDisclosure = null, quotaSummary = null, quotaDetailsOpen = false;
+const quotaPercent = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100;
+function currentQuotaRow(card, row, now = Date.now()) {
+  const reset = Date.parse(row.reset_at), fresh = Date.parse(row.fresh_until);
+  const limit = row.period === 'five_hour' ? 18000000 : row.period === 'weekly' ? 604800000 : 0;
+  const timestamps = [card.collected_at, row.observed_at];
+  return ['available', 'partial'].includes(card.status) && row.status === 'available' && !row.stale && !row.reset_passed && !row.reset_invalid &&
+    quotaPercent(row.remaining_percent) && timestamps.every(value => !value || validTime(value) && Date.parse(value) <= now) &&
+    validTime(card.collected_at) && validTime(row.fresh_until) && fresh >= now && validTime(row.reset_at) && reset > now && reset - now <= limit + 300000;
+}
 function renderQuota(quota) {
+  const restoreFocus = Boolean(quotaSummary && document.activeElement === quotaSummary);
+  quotaDetailsOpen = quotaDisclosure?.open ?? quotaDetailsOpen;
+  const grid = node('div', '', 'quota-summary-grid');
+  // No per-model allocations: Antigravity has two shared pools.
+  for (const provider of ['codex', 'claude', 'antigravity']) {
+    const cards = quota.usage?.cards.filter(card => card.provider === provider) ?? [];
+    const card = cards.length === 1 ? cards[0] : null;
+    const item = node('section', '', `quota-summary-card provider-${provider}`);
+    item.append(node('h3', provider === 'antigravity' ? 'Antigravity' : quotaProviders[provider]), node('small', 'Remaining'));
+    for (const pool of provider === 'antigravity' ? ['gemini_shared', 'claude_gpt_shared'] : [null]) {
+      if (pool) item.append(node('strong', pool === 'gemini_shared' ? 'Gemini shared' : 'Claude / GPT shared'));
+      const rates = node('div', '', 'quota-rates');
+      const states = [];
+      for (const period of ['five_hour', 'weekly']) {
+        const matches = card?.current_rows.filter(row => row.period === period && (row.shared_pool ?? null) === pool) ?? [];
+        const row = matches.length === 1 ? matches[0] : null;
+        const valid = row && currentQuotaRow(card, row);
+        const past = card?.last_known_rows.filter(row => row.period === period && (row.shared_pool ?? null) === pool) ?? [];
+        const reference = !valid && past.length === 1 && quotaPercent(past[0].remaining_percent) ? past[0] : null;
+        const value = valid ? row.remaining_percent : reference ? reference.remaining_percent : null;
+        const state = valid ? 'current' : reference ? 'reference' : row && (row.stale || row.reset_passed || Date.parse(row.fresh_until) < Date.now() || Date.parse(row.reset_at) <= Date.now()) ? 'stale' : 'unknown';
+        states.push(state);
+        rates.append(node('span', `${period === 'five_hour' ? '5h' : 'Weekly'} ${value === null ? '?' : `${Number(value.toFixed(1))}%`}${reference ? ' reference' : ''}`, state));
+      }
+      item.append(rates);
+      if (states.some(state => state !== 'current')) item.append(node('small', [...new Set(states.filter(state => state !== 'current'))].join(' / '), 'quota-badge'));
+    }
+    grid.append(item);
+  }
+  const details = node('details', '', 'quota-details'); details.open = quotaDetailsOpen;
+  const summary = node('summary', 'Quota details');
+  const content = node('div', '', 'quota-detail-grid');
+  details.append(summary, content);
+  quotaDisclosure = details; quotaSummary = summary;
+  details.addEventListener?.('toggle', () => { if (quotaDisclosure === details) quotaDetailsOpen = details.open; });
+  renderQuotaDetails(quota, content);
+  if (quota.usage) for (const card of quota.usage.cards) {
+    const diagnostic = node('section', '', 'quota-item');
+    diagnostic.append(node('h3', card.provider === 'antigravity' ? 'Antigravity shared pools' : quotaProviders[card.provider]),
+      node('small', `Collection: ${card.status ?? 'unknown'}${card.error_kind ? ` / ${card.error_kind}` : ''}`));
+    for (const row of card.current_rows) diagnostic.append(node('small', `${row.shared_pool ?? row.model_family} / ${row.period}: remaining ${currentQuotaRow(card, row) ? row.remaining_percent + '%' : '?'} / fresh until ${time(row.fresh_until)}`));
+    for (const reference of card.model_references ?? []) diagnostic.append(node('small', `${reference.official_name}: ${reference.shared_pool ?? 'unconfirmed pool'} reference; individual quota not reported`));
+    content.append(diagnostic);
+  }
+  el('quota').replaceChildren(grid, details);
+  if (restoreFocus) summary.focus?.({ preventScroll: true });
+}
+function renderQuotaDetails(quota, target) {
   if (quota.usage) {
     const items = quota.usage.cards.map(card => {
       const item = node('div', '', 'quota-item reference');
       item.append(node('h3', `${card.provider === 'antigravity' ? 'AG' : quotaProviders[card.provider]} ・ 保存済み取得値`), node('small', `収集: ${time(card.collected_at)} ・ 最終成功: ${time(card.last_success_collected_at)}`));
       for (const [rows, historical] of [[card.current_rows, false], [card.last_known_rows, true]]) for (const row of rows) {
-        const current = !historical && row.status === 'available';
+        const current = !historical && currentQuotaRow(card, row);
         const used = typeof row.used_percent === 'number' && Number.isFinite(row.used_percent) && row.used_percent >= 0 && row.used_percent <= 100 ? `${row.used_percent}%` : '不明';
         item.append(node('small', `${row.model_family} / ${row.period}${row.shared_pool ? ' / ' + row.shared_pool : ''} ・ ${current ? '取得値' : historical ? '前回値(参考)' : '現在値不明'}: ${used} ・ 観測: ${time(row.observed_at)} ・ リセット: ${time(row.reset_at)}${row.reset_passed ? ' (更新待ち)' : ''}`));
       }
@@ -162,7 +221,7 @@ function renderQuota(quota) {
       item.append(node('small', '新規収集は開始していません。古い値は参考情報です。'));
       return item;
     });
-    items.push(node('small', `配信: ${time(quota.servedAt)}`)); el('quota').replaceChildren(...items); return;
+    items.push(node('small', `配信: ${time(quota.servedAt)}`)); target.replaceChildren(...items); return;
   }
   const items = quota.entries.map(entry => {
     const item = node('div', '', `quota-item ${entry.freshness}`);
@@ -174,7 +233,7 @@ function renderQuota(quota) {
     return item;
   });
   items.push(node('small', `配信: ${time(quota.servedAt)}`));
-  el('quota').replaceChildren(...(quota.entries.length ? items : [node('p', 'クォータ情報は未接続です(不明)'), items.at(-1)]));
+  target.replaceChildren(...(quota.entries.length ? items : [node('p', 'クォータ情報は未接続です(不明)'), items.at(-1)]));
 }
 async function refreshQuota() {
   try {
