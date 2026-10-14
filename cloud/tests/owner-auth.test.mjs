@@ -222,6 +222,8 @@ test('confirmed-owner regression: strict sub equality + linked-account check are
     context.location.search = search; await runInContext('refreshAuth()', context);
     assert.doesNotMatch(text(el('auth')), /オーナー未確認|相関ID/, search); assert.match(text(el('auth')), /ログインは成立していません/, search); assert.doesNotMatch(text(el('auth')), new RegExp(SUB + '|' + stateParam + '|' + expected));
   }
+  context.location.search = '?error=email_not_found'; await runInContext('refreshAuth()', context);
+  assert.match(text(el('auth')), /メール情報を取得できず/); assert.match(text(el('auth')), /scope設定の確認/); assert.match(text(el('auth')), new RegExp('相関ID: ' + expected)); assert.doesNotMatch(text(el('auth')), /オーナー未確認.*拒否/); assert.doesNotMatch(text(el('auth')), new RegExp(SUB + '|' + stateParam));
   context.location.search = '?error=owner_unconfirmed'; await runInContext('refreshAuth()', context);
   assert.match(text(el('auth')), new RegExp('相関ID: ' + expected)); assert.match(text(el('auth')), /ログインもオーナー認定も成立していません/); assert.doesNotMatch(text(el('auth')), new RegExp(SUB + '|' + stateParam));
   // A sign-in whose authorization URL has no usable state clears the old label: nothing stale is reused.

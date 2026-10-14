@@ -189,7 +189,10 @@ function returnedAuthError() {
   const match = /(?:^|[?&])error=([^&#]*)/.exec(String(location.search ?? ''));
   if (!match) return null;
   let label = null; try { label = sessionStorage.getItem('authCorrelation'); } catch { /* storage unavailable */ }
-  return match[1] === 'owner_unconfirmed' ? { ownerUnconfirmed: true, label: /^[0-9a-f]{16}$/.test(label ?? '') ? label : null } : { ownerUnconfirmed: false, label: null };
+  const safeLabel = /^[0-9a-f]{16}$/.test(label ?? '') ? label : null;
+  if (match[1] === 'owner_unconfirmed') return { ownerUnconfirmed: true, label: safeLabel };
+  if (match[1] === 'email_not_found') return { ownerUnconfirmed: false, emailNotFound: true, label: safeLabel };
+  return { ownerUnconfirmed: false, label: null };
 }
 async function authPost(path, body) {
   const response = await fetch(path, { method: 'POST', credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(15000), headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -219,6 +222,7 @@ async function refreshAuth() {
     const parts = [node('span', authLabels[state]), button], failure = state === 'diagnostic' ? returnedAuthError() : null;
     // Only error=owner_unconfirmed gets the diagnostic explanation (+ matching label, when one is stored). Other errors are reported neutrally.
     if (failure?.ownerUnconfirmed) parts.push(node('span', `診断: サインインは「オーナー未確認」のため拒否されました。ログインもオーナー認定も成立していません。${failure.label ? `相関ID: ${failure.label}` : '(相関IDなし)'}`));
+    else if (failure?.emailNotFound) parts.push(node('span', `Vercelからメール情報を取得できず、サインインは未完了です。Appのscope設定の確認が必要です。ログイン・オーナー確認は成立していません。${failure.label ? `相関ID: ${failure.label}` : '(相関IDなし)'}`));
     else if (failure) parts.push(node('span', 'サインインは完了しませんでした(エラー)。ログインは成立していません。'));
     el('auth').replaceChildren(...parts);
   } catch { el('auth').replaceChildren(node('span', '認証が利用できません')); }

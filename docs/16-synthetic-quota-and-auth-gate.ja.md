@@ -181,3 +181,8 @@
 - 実タスク(113件)の移行は未承認で、読み取り・移行していない。
 - 本番デプロイ・Vercelプロジェクト/環境変数/保護設定の変更は未実施。
 
+
+
+## email_not_found の診断（2026-10-14）
+
+公開SDK better-auth/core 1.7.7 を公式registryのSRIと照合し、合成入力でscope未指定とPKCE S256を確認。callbackはproviderのメール欠落をuser処理・owner診断hookより前に拒否する。UIはこのエラーをowner拒否と区別し、保存済み相関ハッシュのみ表示する。実grant scopeとAppのemail設定は未確認。scope不足は推測であり断定しない。新しいscope・権限は変更していない。email取得が必要な場合はApp設定の確認後、本人の具体承認を得る。メールやsubjectを生成して代用しない。
