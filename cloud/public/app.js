@@ -159,6 +159,19 @@ function currentQuotaRow(card, row, now = Date.now()) {
     quotaPercent(row.remaining_percent) && timestamps.every(value => !value || validTime(value) && Date.parse(value) <= now) &&
     validTime(card.collected_at) && validTime(row.fresh_until) && fresh >= now && validTime(row.reset_at) && reset > now && reset - now <= limit + 300000;
 }
+function quotaResetText(card, row, historical = false, now = Date.now()) {
+  if (!row || !validTime(row.reset_at)) return 'リセット: 未取得';
+  const reset = Date.parse(row.reset_at), limit = row.period === 'five_hour' ? 18000000 : row.period === 'weekly' ? 604800000 : 0;
+  const stamp = new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(reset) + ' JST';
+  if (row.reset_invalid || !limit || reset - now > limit + 300000) return 'リセット: 未確認';
+  if (reset <= now || row.reset_passed) return `参考 ${stamp}・更新待ち`;
+  const fresh = !historical && ['available', 'partial'].includes(card.status) && row.status === 'available' && !row.stale &&
+    validTime(card.collected_at) && Date.parse(card.collected_at) <= now && validTime(row.fresh_until) && Date.parse(row.fresh_until) >= now &&
+    (!row.observed_at || validTime(row.observed_at) && Date.parse(row.observed_at) <= now);
+  if (!fresh) return `参考 ${stamp}・古い値`;
+  const minutes = Math.ceil((reset - now) / 60000), days = Math.floor(minutes / 1440), hours = Math.floor(minutes % 1440 / 60);
+  return `${stamp}・あと${days ? days + '日' : ''}${hours ? hours + '時間' : ''}${minutes % 60}分`;
+}
 function renderQuota(quota) {
   const restoreFocus = Boolean(quotaSummary && document.activeElement === quotaSummary);
   quotaDetailsOpen = quotaDisclosure?.open ?? quotaDetailsOpen;
@@ -182,7 +195,9 @@ function renderQuota(quota) {
         const value = valid ? row.remaining_percent : reference ? reference.remaining_percent : null;
         const state = valid ? 'current' : reference ? 'reference' : row && (row.stale || row.reset_passed || Date.parse(row.fresh_until) < Date.now() || Date.parse(row.reset_at) <= Date.now()) ? 'stale' : 'unknown';
         states.push(state);
-        rates.append(node('span', `${period === 'five_hour' ? '5h' : 'Weekly'} ${value === null ? '?' : `${Number(value.toFixed(1))}%`}${reference ? ' reference' : ''}`, state));
+        const window = node('span', `${period === 'five_hour' ? '5h' : 'Weekly'} ${value === null ? '?' : `${Number(value.toFixed(1))}%`}${reference ? ' reference' : ''}`, 'quota-window ' + state);
+        window.append(node('small', quotaResetText(card, row ?? reference, !row && Boolean(reference)), 'quota-reset'));
+        rates.append(window);
       }
       item.append(rates);
       if (states.some(state => state !== 'current')) item.append(node('small', [...new Set(states.filter(state => state !== 'current'))].join(' / '), 'quota-badge'));

@@ -8,3 +8,4 @@ main{padding:12px 18px}.toolbar{gap:10px;margin:10px 0}.toolbar label{gap:8px;fo
 @media(max-width:600px){header{padding:9px 12px;gap:8px}.brand h1{font-size:17px}header #connection{font-size:11px}#auth{font-size:11px;margin-left:auto}main{padding:10px 12px}.quota-summary-card{flex-basis:135px}.quota-rates{font-size:12px;gap:7px}.toolbar label{width:100%}.toolbar input{flex:1;width:100%;min-width:0}}
 
 .quota-summary-card strong,.quota-summary-card .quota-badge{display:block}.quota-summary-card strong{font-size:12px;margin-top:4px}.quota-summary-card .quota-badge{margin:2px 0}.quota-summary-card>small{display:block;margin:0 0 3px}
+.quota-window{display:block}.quota-summary-card .quota-reset{display:block;max-width:240px;font-size:10px;line-height:1.4;white-space:normal;margin:2px 0;font-weight:400}.quota-rates{gap:8px 16px}

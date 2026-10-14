@@ -18,7 +18,7 @@ export class PostgresStore {
       const { rows } = await client.query('SELECT document FROM dashboard_state WHERE id = 1 FOR UPDATE');
       if (!rows.length) throw new Error('Schema not initialized');
       const document = rows[0].document;
-      const result = change(document);
+      const result = await change(document);
       await client.query('UPDATE dashboard_state SET document = $1::jsonb WHERE id = 1', [JSON.stringify(document)]);
       await client.query('COMMIT');
       return result;

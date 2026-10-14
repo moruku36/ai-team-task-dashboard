@@ -24,6 +24,18 @@ const stamp = delta => new Date(Date.now() + delta).toISOString();
 const row = (over = {}) => ({ status: 'available', model_family: 'synthetic', shared_pool: null, period: 'five_hour', remaining_percent: 0, used_percent: 100, observed_at: stamp(-1000), reset_at: stamp(3600000), fresh_until: stamp(60000), ...over });
 const card = (over = {}) => ({ provider: 'codex', status: 'available', collected_at: stamp(-1000), current_rows: [row()], last_known_rows: [], ...over });
 const quota = cards => ({ servedAt: stamp(0), entries: [], usage: { cards } });
+test('reset windows use explicit JST and distinguish fresh countdown, stale references, passed and unknown', () => {
+  const { context } = harness(); const now = Date.parse('2030-01-01T00:00:00Z');
+  const c = card({ collected_at: '2029-12-31T23:59:00Z' }), r = row({ observed_at: '2029-12-31T23:59:00Z', fresh_until: '2030-01-01T00:05:00Z', reset_at: '2030-01-01T01:00:00Z' });
+  context.c = c; context.r = r; context.now = now;
+  const render = historical => runInContext(`quotaResetText(c,r,${historical},now)`, context);
+  assert.match(render(false), /10:00 JST.*あと1時間0分/);
+  assert.match(render(true), /参考.*古い値/); assert.doesNotMatch(render(true), /あと/);
+  context.r = { ...r, reset_at: '2029-12-31T23:00:00Z' }; assert.match(render(false), /更新待ち/);
+  context.r = { ...r, reset_at: null }; assert.match(render(false), /未取得/);
+  context.r = { ...r, reset_at: '2030-01-04T00:00:00Z' }; assert.match(render(false), /未確認/);
+  context.r = { ...r, period: 'weekly', reset_at: '2030-01-04T00:00:00Z' }; assert.match(render(false), /あと3日0分/);
+});
 test('compact remaining percentages preserve zero, closed disclosure and focus across refresh', () => {
   const { render } = harness(); let panel = render(quota([card()]));
   assert.match(text(panel.children[0]), /5h 0%/);

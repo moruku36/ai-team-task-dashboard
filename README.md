@@ -17,6 +17,12 @@ A personal dashboard for tracking work shared with AI assistants: what is active
 
 Saved quota snapshots do **not** imply ongoing collection. Collectors were not restarted by this work; old observations remain references. Automated cloud-AI updates, historical analytics and continuous usage monitoring are not Phase 1 deliverables.
 
+## Current operating policy — Web only
+
+The Web app / Neon is the sole canonical task store. Local Markdown and the local UI are retired for ongoing updates. Use the existing owner Web session, or the explicitly authorized Vercel operator job described in [Web task operations](docs/17-web-task-operations.md). It reuses the existing connected deployment authority and production DB settings without new credentials. No local sync or background automation is started.
+
+Reset summaries now show per-window JST dates/countdowns when observations are fresh; missing or stale resets remain unknown/reference.
+
 ## Foundation: Backlog.md
 
 The adopted OSS is **[Backlog.md](https://github.com/MrLesk/Backlog.md/tree/v1.53.0), by MrLesk**, pinned to v1.53.0 (MIT). Its official Windows executable supports Markdown tasks, a CLI, MCP, a terminal Kanban board, a local web board, search, assignees, labels, priorities, milestones, dependencies and acceptance/DoD checklists. Git is optional through no-git mode. See the [selection record](docs/oss-reselection-20261011.ja.md).
@@ -59,12 +65,12 @@ The current cloud audit keeps at most 1,000 mutation events; imported historical
 |---|---|
 | Official local CLI/MCP creates or edits a task | Shared local Markdown only; the local web board watches those files |
 | Signed-in owner opens a cloud card and saves its status (including Done) | Same-origin POST /api/tasks → owner authorization → version-checked Neon transaction → cloud refetch |
-| Cloud task creation or broader edits | The protected API has a create/update contract, but the current UI only exposes status editing. An authenticated AI updater or creation form is not wired |
+| Cloud task creation or broader edits | The protected API has a create/update contract, but the current UI only exposes status editing. The existing authenticated Vercel operator job can add/update tasks; a browser creation form is not wired |
 | Browser's 30-second refresh | Reads the cloud DB; does not read or synchronize Windows files |
 
-The initial private import was a one-time migration. No scheduled local-to-Neon writer is configured in this repository or was started by Phase 1. Later local CLI updates can therefore diverge from the cloud board. Requesting an AI update is not yet a verified automatic cloud-write workflow; that bridge needs a separate implementation. Do not keep two competing canonical stores or repeat a bulk import over cloud edits.
+The initial private import was a one-time migration. No scheduled local-to-Neon writer is configured in this repository or was started by Phase 1. Later local CLI updates can therefore diverge from the cloud board. Authorized assistants can use the explicit operator-job workflow; it is not an automatic background sync. Do not keep two competing canonical stores or repeat a bulk import over cloud edits.
 
-## Local usage
+## Historical local usage (not the current update path)
 
 ```powershell
 .\scripts\Install-Backlog.ps1                 # pinned v1.53.0 binary, SHA256 verified
