@@ -19,7 +19,9 @@ const date = value => {
 const percent = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100 ? value : null;
 const modelNames = Object.freeze({gpt_oss_120b:'GPT-OSS-120b', claude_opus_5_5:'Claude Opus 5.5 (thinking)', claude_sonnet_5_5:'Claude Sonnet 5.5 (thinking)'});
 const pools = {gemini:'gemini_shared', claude:'claude_gpt_shared', gpt_oss:'claude_gpt_shared'};
-const mappingUrl = 'https://antigravity.google/docs/models/';
+const argonLimitId = 'gemini_4_argon_weekly';
+const argonMaxRelativeSeconds = 604800 + 300; // seconds: one week plus five minutes (605100)
+const mappingUrl ='https://antigravity.google/docs/models/';
 
 export function sanitizeUsage(input, now = Date.now()) {
   if (input?.display_schema_version !== 1 || !Array.isArray(input.cards)) throw new Error('Unsupported usage schema');
@@ -142,6 +144,46 @@ export function sanitizeUsage(input, now = Date.now()) {
         shared_window_ids:[...new Set(ids)], pool_mapping_source:mapped?'official_models_documentation':null, pool_mapping_url:mapped?mappingUrl:null,
         catalog_confirmation:catalogObserved?'observed_in_cli_catalog':'not_provided', catalog_observed_at:catalogObserved?catalogTime:null});
     }
+    // Gemini 4 Argon weekly limit: a separate window, never merged into gemini_shared and never derived from 5h values.
+    // The input must name the limit, state whether `percent` is remaining or used, and carry its own observation time.
+    // A relative reset ("Resets in 4d") has no confirmed rounding rule: it is kept as an approximate, precision-unconfirmed
+    // hint only and is never converted to a reset time or used for expiry decisions.
+    const argonWeekly = (raw, historical) => {
+      if (provider !== 'antigravity' || !raw || typeof raw !== 'object' || raw.limit_id !== argonLimitId) return null;
+      try {
+        let relative = null;
+        if (raw.reset_in_seconds !== undefined && raw.reset_in_seconds !== null) {
+          // Validate before any use; a malformed item drops only this Argon entry, never the whole payload.
+          if (typeof raw.reset_in_seconds !== 'number' || !Number.isFinite(raw.reset_in_seconds) || raw.reset_in_seconds <= 0 || raw.reset_in_seconds > argonMaxRelativeSeconds) return null;
+          relative = raw.reset_in_seconds;
+        }
+        const basis = ['remaining', 'used'].includes(raw.percent_basis) ? raw.percent_basis : null;
+        const given = percent(raw.percent);
+        const remainingValue = basis && given !== null ? (basis === 'remaining' ? given : 100 - given) : null;
+        const observed = date(raw.observed_at), collection = historical ? lastSuccess : collected;
+        const observedMs = observed ? Date.parse(observed) : NaN, collectionMs = collection ? Date.parse(collection) : NaN;
+        const reset = date(raw.reset_at);
+        const hasRelative = !reset && relative !== null;
+        // An approximate relative value only means something next to the time it was observed.
+        const freshnessMs = Number.isFinite(collectionMs) ? Number.isFinite(observedMs) ? Math.min(collectionMs, observedMs) : hasRelative ? NaN : collectionMs : NaN;
+        const ageSeconds = Number.isFinite(freshnessMs) ? Math.max(0, (now - freshnessMs) / 1000) : null;
+        const stale = ageSeconds === null || ageSeconds > staleSeconds || observedMs > now || collectionMs > now;
+        const resetPassed = !!reset && Date.parse(reset) <= now;
+        const resetInvalid = !!reset && Date.parse(reset) - now > 604800 * 1000 + 300000;
+        const current = !historical && ['available', 'partial'].includes(status) && alignment !== 'mismatch' && remainingValue !== null && !stale && !resetPassed && !resetInvalid;
+        const keep = alignment !== 'mismatch' && remainingValue !== null && (current || historical);
+        return {limit_id: argonLimitId, period: 'weekly', shared_pool: null, percent_basis: basis,
+          observed_at: observed, reset_at: reset,
+          reset_approximate: hasRelative, reset_precision: hasRelative ? 'unconfirmed' : reset ? 'absolute' : 'not_provided',
+          reset_relative_seconds: hasRelative ? relative : null,
+          age_seconds: ageSeconds, fresh_until: !stale ? new Date(freshnessMs + staleSeconds * 1000).toISOString() : null,
+          reset_passed: resetPassed, reset_invalid: resetInvalid, stale,
+          status: historical ? 'last_known' : current ? 'available' : basis === null ? 'basis_unconfirmed' : 'unavailable',
+          used_percent: keep ? 100 - remainingValue : null, remaining_percent: keep ? remainingValue : null};
+      } catch {
+        return null;
+      }
+    };
     // Fixed window inventory; derive validity from sanitized rows, never trust raw state/percent fields.
     const resetWindows = (provider === 'antigravity' ? ['gemini_shared','claude_gpt_shared'] : [null]).flatMap(pool => ['five_hour','weekly'].map(period => {
       const matches = currentRows.filter(row=>row.period===period && row.shared_pool===pool);
@@ -155,7 +197,8 @@ export function sanitizeUsage(input, now = Date.now()) {
       provider_updated_at: date(card.provider_updated_at), snapshot_updated_at: date(card.snapshot_updated_at),
       attempted_at: date(card.attempted_at), attempt_started_at: date(card.attempt_started_at),
       attempt_finished_at: date(card.attempt_finished_at), retry_not_before: date(card.retry_not_before),
-      last_success_collected_at: lastSuccess, current_rows:currentRows, last_known_rows:pastRows, model_references:references});
+      last_success_collected_at: lastSuccess, current_rows:currentRows, last_known_rows:pastRows, model_references:references,
+      ...(provider === 'antigravity' ? {argon_weekly: argonWeekly(card.argon_weekly, false), last_known_argon_weekly: argonWeekly(card.last_known_argon_weekly, true)} : {})});
   }
   return {display_schema_version: 1, view_read_at: date(input.view_read_at), served_at: new Date(now).toISOString(), cards};
 }

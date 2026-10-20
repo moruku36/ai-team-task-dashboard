@@ -14,9 +14,6 @@
     if (!item || typeof item.amount !== 'number' || !Number.isFinite(item.amount)) {
       return { text: '未取得', isNegative: false, isDebt: false, valid: false };
     }
-    if (!item.currency_verified && (!item.currency || !ISO_CURRENCIES.has(item.currency))) {
-      return { text: '通貨未確認', isNegative: false, isDebt: false, valid: false, unconfirmedCurrency: true };
-    }
     const amount = item.amount;
     const isNegative = amount < 0 || Object.is(amount, -0);
     const abs = Math.abs(amount);
@@ -28,16 +25,46 @@
     } else {
       const fixed = abs.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
       const parts = fixed.split('.');
-      const intPart = parts[0];
       const fracPart = (parts[1] || '').padEnd(2, '0');
-      numStr = (isNegative ? '-' : '') + intPart + '.' + fracPart;
+      numStr = (isNegative ? '-' : '') + parts[0] + '.' + fracPart;
     }
-    return {
-      text: `${item.currency} ${numStr}`,
-      isNegative,
-      isDebt: isNegative,
-      valid: true
-    };
+    // An unrecognised currency string is never echoed or guessed: keep the amount as a reference only.
+    if (!item.currency_verified || !item.currency || !ISO_CURRENCIES.has(item.currency)) {
+      return { text: `${numStr} 通貨未確認`, isNegative, isDebt: isNegative, valid: false, unconfirmedCurrency: true };
+    }
+    return { text: `${item.currency} ${numStr}`, isNegative, isDebt: isNegative, valid: true };
+  };
+  // Cards hug their content (no flex-grow) so the right side is not left empty; narrow widths simply wrap.
+  const cardStyle = accent => `flex:0 1 auto;min-width:150px;max-width:100%;box-sizing:border-box;border-left:3px solid ${accent};border-radius:4px;padding:4px 10px 4px 8px;background:transparent;color:inherit`;
+  const hasAmount = item => !!item && typeof item.amount === 'number' && Number.isFinite(item.amount);
+  // Last money value that was actually shown from a collected payload; survives display-communication failures.
+  let mimoLastGood = null;
+  const rememberMimo = (money, collectedAt, observedAt) => {
+    if (mimoLastGood?.collectedAt && collectedAt && Date.parse(mimoLastGood.collectedAt) > Date.parse(collectedAt)) return;
+    mimoLastGood = {money: {amount: money.amount, currency: money.currency, currency_verified: money.currency_verified}, collectedAt, observedAt};
+  };
+  const mimoView = (card, now) => {
+    const cur = card.balance, past = card.last_known_balance;
+    if (card.account_alignment === 'mismatch') { mimoLastGood = null; return {kind: 'none', label: 'アカウント不一致（旧残高破棄）'}; }
+    const reference = (money, collectedAt, observedAt, label) => ({kind: 'reference', money, collectedAt, observedAt, label});
+    const lastGood = () => mimoLastGood && reference(mimoLastGood.money, mimoLastGood.collectedAt, mimoLastGood.observedAt, '更新失敗');
+    if (failed) return lastGood() || {kind: 'none', label: '取得失敗'};
+    const future = card.collected_at && Date.parse(card.collected_at) > now;
+    let view = null;
+    if (hasAmount(cur)) {
+      const verified = !!cur.currency_verified;
+      const fresh = verified && !cur.stale && (!cur.fresh_until || Date.parse(cur.fresh_until) >= now) && card.status === 'available' && !future;
+      const expired = cur.stale || (cur.fresh_until && Date.parse(cur.fresh_until) < now) || card.status === 'stale';
+      if (fresh) view = {kind: 'current', money: cur, collectedAt: card.collected_at, observedAt: cur.observed_at};
+      else if (verified && expired) view = {kind: 'stale', money: cur, collectedAt: card.collected_at, observedAt: cur.observed_at, label: '古い情報'};
+      else if (!verified) view = reference(cur, card.collected_at, cur.observed_at, '通貨未確認');
+    }
+    if (!view && hasAmount(past)) {
+      view = past.currency_verified ? reference(past, card.last_success_collected_at, past.observed_at, card.status === 'stale' ? '古い情報' : '更新失敗')
+        : reference(past, card.last_success_collected_at, past.observed_at, '通貨未確認');
+    }
+    if (view) { rememberMimo(view.money, view.collectedAt, view.observedAt); return view; }
+    return lastGood() || {kind: 'none', label: card.status === 'unconfirmed' ? '取得方法未確認' : card.status === 'fetch_failed' ? '取得失敗' : '未取得'};
   };
   const stamp = value => value ? new Date(value).toLocaleString('ja-JP', {timeZone:'Asia/Tokyo'}) + ' JST' : '未提供';
   const shortStamp = value => {
@@ -67,7 +94,7 @@
     applyTheme();
     if(!data || !Array.isArray(data.cards)) {append(panel,'p','残量データの読取失敗。'); return;}
     if(failed){const alert=append(panel,'p','更新失敗・前回値を表示中');alert.style.cssText='color:#ef4444;font-size:11px;font-weight:600;margin:0 0 4px 0';}
-    const summaryGrid=document.createElement('div'); summaryGrid.style.cssText='display:flex;flex-wrap:wrap;gap:6px'; panel.append(summaryGrid);
+    const summaryGrid=document.createElement('div'); summaryGrid.style.cssText='display:flex;flex-wrap:wrap;gap:4px 10px;align-items:flex-start'; panel.append(summaryGrid);
     const details=document.createElement('details'); details.open=detailsOpen; disclosure=details;
     details.style.cssText='margin-top:4px;max-height:36vh;overflow:auto';
     details.addEventListener?.('toggle',()=>{if(disclosure===details)detailsOpen=details.open;});
@@ -83,65 +110,38 @@
     const orderedCards=[...cards].sort((a,b)=>{const ai=order.indexOf(a.provider),bi=order.indexOf(b.provider); return (ai===-1?99:ai)-(bi===-1?99:bi);});
     for(const card of orderedCards){
       if(card.provider==='mimo'){
-        const colors={codex:'#2563eb',claude:'#c2410c',antigravity:'#7c3aed',mimo:'#0284c7'},accent=colors[card.provider];
-        const section=document.createElement('section');section.style.cssText=`flex:1 1 190px;min-width:0;border-left:3px solid ${accent};border-radius:4px;padding:4px 8px;background:transparent;color:inherit`;summaryGrid.append(section);
+        const section=document.createElement('section');section.style.cssText=cardStyle('#0284c7');summaryGrid.append(section);
         const heading=document.createElement('div');heading.style.cssText='display:flex;align-items:center;gap:6px;flex-wrap:wrap';section.append(heading);
         append(heading,'strong','MiMo API').style.cssText='color:inherit;font-family:inherit;font-size:12px';
         const rates=document.createElement('div');rates.style.cssText='display:flex;gap:12px;flex-wrap:wrap;font-size:13px;font-weight:600';section.append(rates);
         const expanded=document.createElement('section');expanded.style.cssText='flex:1 1 220px;min-width:0';resetGrid.append(expanded);
-        append(expanded,'strong','MiMo API（従量課金残高）');append(expanded,'small',` ／ 採集 ${stamp(card.collected_at)}`);
-
-        const cur=card.balance,past=card.last_known_balance;
-        const now=Date.now();
-        const future=card.collected_at && Date.parse(card.collected_at)>now;
-        const curHasMoney=cur && typeof cur.amount==='number' && cur.currency_verified;
-        const pastHasMoney=past && typeof past.amount==='number' && past.currency_verified;
-        const isFresh=curHasMoney && !cur.stale && (!cur.fresh_until || Date.parse(cur.fresh_until)>=now) && card.status==='available' && !future;
-        const isStale=curHasMoney && (cur.stale || (cur.fresh_until && Date.parse(cur.fresh_until)<now) || card.status==='stale');
-        const isLastKnown=!isFresh && !isStale && pastHasMoney;
-
-        if(isFresh){
-          const fmt=formatMimoMoney(cur);
-          const debt=fmt.isDebt?'（残高不足）':'';
-          append(rates,'span',`${fmt.text}${debt}`);
-          const times=[];
-          times.push(card.collected_at ? `取得 ${shortStamp(card.collected_at)}` : '取得 時刻不明');
-          if(cur.observed_at && cur.observed_at !== card.collected_at) times.push(`観測 ${shortStamp(cur.observed_at)}`);
-          append(heading,'small',times.join(' ／ ')).style.cssText='color:inherit;opacity:.7;font-family:inherit;font-size:10px';
-          append(expanded,'div',`API残高：${fmt.text}${debt} ／ 取得済み`);
-        } else if(isStale){
-          const fmt=formatMimoMoney(cur);
-          const debt=fmt.isDebt?'（残高不足）':'';
-          append(rates,'span',`${fmt.text}${debt} 参考`);
-          const times=[];
-          times.push(card.collected_at ? `採集 ${shortStamp(card.collected_at)}` : '採集 時刻不明');
-          if(cur.observed_at && cur.observed_at !== card.collected_at) times.push(`観測 ${shortStamp(cur.observed_at)}`);
-          append(heading,'small',`${times.join(' ／ ')}（古い情報）`).style.cssText='color:inherit;opacity:.7;font-family:inherit;font-size:10px';
-          append(expanded,'div',`API残高：${fmt.text}${debt} ／ 古い取得値`);
-        } else if(isLastKnown){
-          const fmt=formatMimoMoney(past);
-          const debt=fmt.isDebt?'（残高不足）':'';
-          const lastLabel=card.status==='stale'?'古い情報':'更新失敗';
-          append(rates,'span',`${fmt.text}${debt} 前回参考`);
-          const times=[];
-          times.push(card.last_success_collected_at ? `参考 ${shortStamp(card.last_success_collected_at)}` : '参考 成功時刻不明');
-          if(past.observed_at && past.observed_at !== card.last_success_collected_at) times.push(`観測 ${shortStamp(past.observed_at)}`);
-          append(heading,'small',`${times.join(' ／ ')}（${lastLabel}）`).style.cssText='color:inherit;opacity:.7;font-family:inherit;font-size:10px';
-          append(expanded,'div',`API残高：${fmt.text}${debt} ／ ${lastLabel}（前回参考値）`);
+        const view=mimoView(card,Date.now());
+        const shownCollected=view.kind==='none'?card.collected_at:view.collectedAt;
+        append(expanded,'strong','MiMo API（従量課金残高）');append(expanded,'small',` ／ 採集 ${stamp(shownCollected)}`);
+        const small=text=>append(heading,'small',text).style.cssText='color:inherit;opacity:.7;font-family:inherit;font-size:10px';
+        if(view.kind==='none'){
+          append(rates,'span','—');small(view.label);
+          append(expanded,'div',`API残高：— ／ ${view.label}`);
         } else {
-          const isCurrencyUnconfirmed=(cur && typeof cur.amount==='number' && !cur.currency_verified) ||
-                                       (!cur && past && typeof past.amount==='number' && !past.currency_verified);
-          const isUnconfirmed=card.status==='unconfirmed';
-          const label=isCurrencyUnconfirmed?'通貨未確認':isUnconfirmed?'取得方法未確認':card.status==='fetch_failed'?'取得失敗':'未取得';
-          append(rates,'span',isCurrencyUnconfirmed?'通貨未確認':'—');
-          append(heading,'small',label).style.cssText='color:inherit;opacity:.7;font-family:inherit;font-size:10px';
-          append(expanded,'div',`API残高：— ／ ${label}`);
+          const fmt=formatMimoMoney(view.money),debt=fmt.isDebt?'（残高不足）':'';
+          const times=[view.kind==='current'?(view.collectedAt?`取得 ${shortStamp(view.collectedAt)}`:'取得 時刻不明'):(view.collectedAt?`${view.kind==='reference'?'参考':'採集'} ${shortStamp(view.collectedAt)}`:'参考 成功時刻不明')];
+          if(view.observedAt && view.observedAt!==view.collectedAt)times.push(`観測 ${shortStamp(view.observedAt)}`);
+          if(view.kind==='current'){
+            append(rates,'span',`${fmt.text}${debt}`);small(times.join(' ／ '));
+            append(expanded,'div',`API残高：${fmt.text}${debt} ／ 取得済み`);
+          } else if(view.kind==='stale'){
+            append(rates,'span',`${fmt.text}${debt} 参考`);small(`${times.join(' ／ ')}（古い情報）`);
+            append(expanded,'div',`API残高：${fmt.text}${debt} ／ 古い取得値`);
+          } else {
+            append(rates,'span',`${fmt.text}${debt} 前回参考`);small(`${times.join(' ／ ')}（${view.label}）`);
+            append(expanded,'div',`API残高：${fmt.text}${debt} ／ ${view.label}（前回参考値）`);
+          }
         }
         continue;
       }
       for(const pool of card.provider==='antigravity'?['gemini_shared','claude_gpt_shared']:[null]){
       const colors={codex:'#2563eb',claude:'#c2410c',antigravity:'#7c3aed'},accent=colors[card.provider];
-      const section=document.createElement('section');section.style.cssText=`flex:1 1 190px;min-width:0;border-left:3px solid ${accent};border-radius:4px;padding:4px 8px;background:transparent;color:inherit`;summaryGrid.append(section);
+      const section=document.createElement('section');section.style.cssText=cardStyle(accent);summaryGrid.append(section);
       const label=pool==='gemini_shared'?'AG Gemini':pool==='claude_gpt_shared'?'AG Claude/GPT':card.provider==='claude'?'Claude':names[card.provider];
       const heading=document.createElement('div');heading.style.cssText='display:flex;align-items:center;gap:6px;flex-wrap:wrap';section.append(heading);
       append(heading,'strong',label).style.cssText='color:inherit;font-family:inherit;font-size:12px';
@@ -167,6 +167,32 @@
         append(expanded,'div',`${period==='five_hour'?'5時間':'週間'}：${valid?`残り${Number(row.remaining_percent.toFixed(2))}%`:'—'} ／ ${state}`);
         if(reference)append(expanded,'small',`前回参考 ${Number(past[0].remaining_percent.toFixed(2))}%（現在値ではありません）／ 採集 ${stamp(card.last_success_collected_at)}`);
         append(expanded,'div',`報告reset：${stamp(reset)} ／ 残り ${countdown}${!valid && reset?'（記録値）':''}`);
+      }
+      if(pool==='gemini_shared'){
+        // Gemini 4 Argon weekly is its own window: never folded into the Gemini shared 5h/weekly values above.
+        const now=Date.now(),a=card.argon_weekly,past=card.last_known_argon_weekly;
+        const future=card.collected_at && Date.parse(card.collected_at)>now;
+        const live=!!a && !failed && !future && a.status==='available' && a.remaining_percent!==null && a.fresh_until && Date.parse(a.fresh_until)>=now && (!a.reset_at || Date.parse(a.reset_at)>now);
+        const ref=!live ? [a,past].find(item=>item && item.remaining_percent!==null && item.limit_id) : null;
+        const shown=live?a:ref;
+        const rate=append(rates,'span',`Argon週 ${shown?`${Number(shown.remaining_percent.toFixed(1))}%`:'—'}${ref?' 参考':shown?'':'（未確認）'}`);
+        rate.setAttribute('data-limit','gemini_4_argon_weekly');
+        rate.setAttribute('aria-label',`Gemini 4 Argon 週間 ${shown?(live?'採集時点の残率 ':'過去の参考値 ')+shown.remaining_percent+'%':'未確認'}`);
+        const basis=a?.percent_basis||past?.percent_basis;
+        const state=failed?'表示通信失敗':!a&&!past?'入力なし（未確認）':a&&a.status==='basis_unconfirmed'?'残率/使用率の別が未確認':live?'取得済み':a?.reset_passed||(a?.reset_at&&Date.parse(a.reset_at)<=now)?'再取得確認待ち':a?.stale||(a?.fresh_until&&Date.parse(a.fresh_until)<now)?'古い取得値':future?'時計不整合':'未取得';
+        append(expanded,'div',`Gemini 4 Argon 週間（共有枠とは別）：${live?`残り${Number(a.remaining_percent.toFixed(2))}%（使用${Number(a.used_percent.toFixed(2))}%）`:'—'} ／ ${state}`);
+        if(ref)append(expanded,'small',`前回参考 ${Number(ref.remaining_percent.toFixed(2))}%（現在値ではありません）／ 観測 ${stamp(ref.observed_at)}`);
+        const cause=a||past;
+        if(cause?.reset_approximate){
+          // "Resets in N" has no confirmed rounding rule: show it as an approximate hint, never as a deadline or countdown.
+          const days=cause.reset_relative_seconds/86400,approx=days>=1?`${Number(days.toFixed(1))}日`:`${Number((cause.reset_relative_seconds/3600).toFixed(1))}時間`;
+          append(expanded,'div',`Argon reset：約${approx}後と表示（概算・精度未確認）／ 観測 ${stamp(cause.observed_at)} ／ 確定時刻なし`);
+        } else if(cause?.reset_at){
+          const delta=Date.parse(cause.reset_at)-now,seconds=Math.max(0,Math.ceil(delta/1000));
+          const rest=seconds===0?'0秒・再取得確認待ち':`${Math.floor(seconds/86400)}日 ${Math.floor(seconds%86400/3600)}時間`;
+          append(expanded,'div',`Argon reset：${stamp(cause.reset_at)} ／ 残り ${rest}${live?'':'（記録値）'}`);
+        } else append(expanded,'div','Argon reset：未提供');
+        if(basis)append(expanded,'small',`百分率の基準：${basis==='remaining'?'残率':'使用率から換算'}`);
       }
       const acquiredAt=card.reset_windows?.find(window=>window.shared_pool===pool)?.collectedAt ?? card.collected_at;
       const times=[];if(hasCurrent)times.push(`取得 ${shortStamp(acquiredAt)}`);if(historical)times.push(`参考 ${shortStamp(card.last_success_collected_at)}`);

@@ -476,13 +476,13 @@ test('TASK-17: End-to-end data pipeline to DOM display: Claude -> AG -> MiMo ord
   assert.match(text(e2eZero.summary.children[3]), /USD 0\.00/);
   assert.doesNotMatch(text(e2eZero.summary.children[3]), /残高不足|未取得/);
 
-  // 8. Account alignment mismatch: clears amount, displays '—' / '未取得'
+  // 8. Account alignment mismatch: clears amount, displays '—' / 'アカウント不一致（旧残高破棄）'
   const e2eMismatch = await renderPipeline(fullInput({
     account_alignment: 'mismatch',
     last_known_balance: { amount: 15.0, currency: 'USD', observed_at: iso(initial - 3600000) }
   }));
   assert.doesNotMatch(text(e2eMismatch.summary.children[3]), /USD/);
-  assert.match(text(e2eMismatch.summary.children[3]), /未取得/);
+  assert.match(text(e2eMismatch.summary.children[3]), /アカウント不一致/);
 
   // 9. Claude and AG remain completely intact when MiMo is failed or unconfirmed
   const e2eMimoFailed = await renderPipeline(fullInput({ status: 'fetch_failed', balance: null, last_known_balance: null }));
