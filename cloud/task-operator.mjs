@@ -29,7 +29,10 @@ export async function applyOperatorBatch(store, batch) {
       const current = matches[0]; if ((current?.version ?? 0) !== op.expectedVersion) throw Error('Task changed; inspect and review');
       const task = current ? { ...op.task, id: current.id, detail: `${current.detail}\n\n--- Operator update ---\n${op.task.detail}` } : op.task;
       const saved = await mutate({ transaction: async change => change(board) }, { requestId: op.requestId, expectedVersion: op.expectedVersion, task }, 'owner-operator');
-      const result = { id: saved.id, version: saved.version, status: saved.status, taskDigest: taskDigest(saved) };
+      // The operator job cannot make an explicit status choice (no statusChange). For a card stored with a legacy status, an update that
+      // keeps the displayed status leaves the stored legacy status in place; say so instead of letting `status` suggest it was persisted.
+      const result = { id: saved.id, version: saved.version, status: saved.status, taskDigest: taskDigest(saved),
+        ...(saved.legacyStatus ? { storedLegacyStatus: saved.legacyStatus, statusPersisted: false } : {}) };
       board.operatorReceipts[key] = { fingerprint, result };
       for (const key of Object.keys(board.operatorReceipts).slice(0, Math.max(0, Object.keys(board.operatorReceipts).length - 1000))) delete board.operatorReceipts[key];
       results.push(result);

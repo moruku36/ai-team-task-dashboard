@@ -8,6 +8,7 @@
   let detailsOpen = false, disclosure = null;
   const names = {codex: 'Codex', claude: 'Claude（本人契約）', antigravity: 'Antigravity（共有枠）', mimo: 'MiMo API'};
   const errors = {rate_limited:'取得制限中（cooldown）', executable_not_found:'タスク環境でCLI未検出', timeout:'取得timeout', parse_error:'読取失敗', version_mismatch:'版不一致', authentication_required:'認証確認待ち', permission_denied:'アクセス拒否', unknown:'取得失敗'};
+  const mimoSources = {official_api:'公式API（実残高）', console_manual:'公式コンソールのBalance画面（手入力・実残高）', mock:'モック（実残高ではありません）', estimate_rejected:'使用量からの推計は残高として表示しません', unconfirmed:'情報源未確認'};
   const pools = {gemini_shared:'AG Gemini共有枠',claude_gpt_shared:'AG Claude / GPT共有枠'};
   const ISO_CURRENCIES = new Set(['USD', 'EUR', 'JPY', 'GBP', 'CNY', 'CHF', 'CAD', 'AUD', 'HKD', 'SGD', 'KRW', 'INR', 'BRL', 'TWD', 'SEK', 'NOK', 'NZD', 'MXN', 'ZAR', 'RUB']);
   const formatMimoMoney = (item) => {
@@ -209,6 +210,7 @@
         append(block,'strong','MiMo API');
         append(block,'p',card.status==='unconfirmed'?'残高照会API：未確認（推測接続なし）':card.status==='available'?'採集成功':card.status==='fetch_failed'?'取得失敗':'現在値なし');
         append(block,'p',`GUI/ACPアカウント一致：${card.account_alignment==='verified'?'確認済み':card.account_alignment==='mismatch'?'不一致（旧残高破棄）':'未照合'}`);
+        append(block,'p',`情報源：${mimoSources[card.balance_source]||mimoSources.unconfirmed}`);
         append(block,'p',`採集：${stamp(card.collected_at)} ／最終成功：${stamp(card.last_success_collected_at)}`);
         append(block,'strong','現在欄（採集時点）');
         if(card.balance && typeof card.balance.amount==='number'){
