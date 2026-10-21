@@ -176,7 +176,7 @@ async function main() {
   const init = await run(PS[0], [...PS.slice(1), '-File', path.join(repo, 'scripts', 'Initialize-DataRoot.ps1'), '-DataRoot', root, '-ExePath', exe]);
   check('Initialize-DataRoot.ps1 succeeds', init.code === 0, init.code === 0 ? undefined : init.out.slice(0, 400));
   const config = fs.readFileSync(path.join(root, 'backlog', 'config.yml'), 'utf8');
-  check('six statuses configured', /^statuses: \["To Do", "In Progress", "Awaiting Approval", "Blocked", "Verifying", "Done"\]/m.test(config));
+  check('four statuses configured', /^statuses: \["To Do", "In Progress", "Blocked", "Done"\]/m.test(config));
   const before = config;
   const again = await run(PS[0], [...PS.slice(1), '-File', path.join(repo, 'scripts', 'Initialize-DataRoot.ps1'), '-DataRoot', root, '-ExePath', exe]);
   check('re-init preserves existing config', again.code === 0 && fs.readFileSync(path.join(root, 'backlog', 'config.yml'), 'utf8') === before);
@@ -192,7 +192,7 @@ async function main() {
   fs.writeFileSync(configPath, before);
 
   // 29 seed tasks across statuses, one assignee each; the 30th (lifecycle) is created while live.
-  const statuses = ['To Do', 'In Progress', 'Awaiting Approval', 'Blocked', 'Verifying', 'Done'];
+  const statuses = ['To Do', 'In Progress', 'Blocked', 'Done'];
   const seedIds = [];
   for (let i = 1; i < TOTAL; i++) {
     const out = await cliOk('task', 'create', `Synthetic task ${i}`, '-d', meta(i, 'none'), '-a', `@ai-${(i % 5) + 1}`, '-s', statuses[i % statuses.length], '--plain');
@@ -228,7 +228,7 @@ async function main() {
   check('WebSocket connected', ws.readyState === WebSocket.OPEN);
   check(`${TOTAL - 1} seed tasks visible via /api/search (UI task path)`, (await getTasks()).length === TOTAL - 1);
 
-  // Lifecycle: create -> In Progress -> Awaiting Approval -> Done.
+  // Lifecycle: create -> In Progress -> Blocked -> Done.
   let life;
   let tasks = await expectLive('create', async () => {
     const out = await cliOk('task', 'create', 'Synthetic lifecycle', '-d', meta('life', 'start'), '-a', '@ai-1', '-s', 'To Do', '--plain');
@@ -236,7 +236,7 @@ async function main() {
     if (!life) throw new Error('cannot parse lifecycle id');
   }, (t) => t.length === TOTAL && find(t, life));
   check(`${TOTAL} tasks present`, tasks.length === TOTAL);
-  for (const [label, status, next] of [['in-progress', 'In Progress', 'work'], ['awaiting-approval', 'Awaiting Approval', 'user decision (approval is not authorization to act)'], ['done', 'Done', 'none']]) {
+  for (const [label, status, next] of [['in-progress', 'In Progress', 'work'], ['blocked', 'Blocked', 'user decision (approval is not authorization to act)'], ['done', 'Done', 'none']]) {
     tasks = await expectLive(label, () => cliOk('task', 'edit', life, '-s', status, '--append-notes', meta(label, next)), (t) => find(t, life)?.status === status);
   }
 
@@ -252,8 +252,8 @@ async function main() {
   // Concurrent updates of different tasks.
   const targets = seedIds.slice(0, 5);
   tasks = await expectLive('concurrent-5-different-tasks',
-    () => Promise.all(targets.map((id) => cliOk('task', 'edit', id, '-s', 'Verifying', '--append-notes', meta('concurrent', 'verify')))),
-    (t) => targets.every((id) => find(t, id)?.status === 'Verifying'));
+    () => Promise.all(targets.map((id) => cliOk('task', 'edit', id, '-s', 'Blocked', '--append-notes', meta('concurrent', 'verify')))),
+    (t) => targets.every((id) => find(t, id)?.status === 'Blocked'));
   check('no task lost after concurrent updates', tasks.length === TOTAL);
 
   const sameId = seedIds[9];

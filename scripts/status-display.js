@@ -1,66 +1,67 @@
 /* Display adapter for the official Backlog.md v1.53.0 UI. No task/config writes. */
 (() => {
-  const label = '最終確認';
-  const explanation = '作業はできていて、動作や成果物を点検中。確認が済んだら完了へ';
-  // Display-only fold of the "Awaiting Approval" board column. Tasks, statuses and saved data are never touched:
-  // the column's own markup stays in the DOM (hidden by CSS) so search, detail views and re-renders still work.
-  const foldStatus = 'Awaiting Approval';
-  let foldOpen = false;
-  try {foldOpen = sessionStorage.getItem('dashboard-fold-awaiting') === 'open';} catch {}
-  const foldCss = `
-    [data-dashboard-fold="empty"]{display:none!important}
-    [data-dashboard-fold="collapsed"]{flex:0 0 3.5rem!important;min-width:3.5rem!important;position:relative}
-    [data-dashboard-fold="collapsed"]>:not([data-dashboard-fold-control]){display:none!important}
-    [data-dashboard-fold="open"]{position:relative}
-    [data-dashboard-fold-control]{font:inherit;color:#374151;cursor:pointer;border:1px solid currentColor;border-color:color-mix(in srgb,currentColor 30%,transparent);background:color-mix(in srgb,currentColor 7%,transparent);border-radius:.5rem;white-space:nowrap}
-    .dark [data-dashboard-fold-control]{color:#e5e7eb}
-    [data-dashboard-fold-control]:hover,[data-dashboard-fold-control]:focus-visible{background:color-mix(in srgb,currentColor 16%,transparent);outline:2px solid currentColor;outline-offset:1px}
-    [data-dashboard-fold="collapsed"]>[data-dashboard-fold-control]{display:flex;flex-direction:column;align-items:center;gap:.75rem;width:100%;min-height:10rem;padding:.75rem .25rem;font-size:.8125rem;font-weight:600;line-height:1.2}
-    [data-dashboard-fold-control] .dashboard-fold-count{order:-1;font-size:.875rem;font-weight:700;padding:.1rem .45rem;border-radius:9999px;background:color-mix(in srgb,currentColor 16%,transparent);writing-mode:horizontal-tb}
-    [data-dashboard-fold-control] .dashboard-fold-label{writing-mode:vertical-rl;text-orientation:upright;letter-spacing:.2em}
-    [data-dashboard-fold="open"]>[data-dashboard-fold-control]{position:absolute;top:.8rem;right:1rem;z-index:1;padding:.1rem .5rem;font-size:.6875rem}`;
-  const foldColumn = () => {
-    if (!document.getElementById('dashboard-fold-style')) {
-      const style = document.createElement('style'); style.id = 'dashboard-fold-style'; style.textContent = foldCss; document.head.append(style);
+  // The board shows four columns (To Do / In Progress / Blocked / Done). Cards that still carry a legacy status are NOT
+  // dropped, auto-completed or re-saved: their own legacy column is hidden by CSS and each card is mirrored into the
+  // column it is read as, with a badge naming the saved legacy status. The mirror is a display-only proxy; clicking it
+  // clicks the real (hidden) card, so details, search and re-renders keep working. Saved data is never touched.
+  const label = '旧「最終確認」（要確認）';
+  const explanation = '旧状態です。完了とは限りません。実態を確認し、To Do / In Progress / Blocked / Done のいずれかへ移してください';
+  const legacy = {
+    'Verifying': {target: 'In Progress', badge: '旧「最終確認」'},
+    'Awaiting Approval': {target: 'Blocked', badge: '旧「承認待ち」'}
+  };
+  const css = `
+    [data-dashboard-legacy-column]{display:none!important}
+    [data-dashboard-legacy-proxies]{display:flex;flex-direction:column;gap:.5rem;margin-top:.5rem}
+    .dashboard-legacy-proxy{font:inherit;text-align:left;color:inherit;cursor:pointer;border:1px dashed currentColor;border-color:color-mix(in srgb,currentColor 45%,transparent);background:color-mix(in srgb,currentColor 6%,transparent);border-radius:.5rem;padding:.5rem .6rem;display:flex;flex-direction:column;gap:.25rem}
+    .dashboard-legacy-proxy:hover,.dashboard-legacy-proxy:focus-visible{background:color-mix(in srgb,currentColor 14%,transparent);outline:2px solid currentColor;outline-offset:1px}
+    .dashboard-legacy-proxy .dashboard-legacy-badge{align-self:flex-start;font-size:.6875rem;font-weight:700;padding:.05rem .45rem;border-radius:9999px;border:1px solid currentColor}
+    .dashboard-legacy-proxy .dashboard-legacy-text{font-size:.8125rem;line-height:1.35;white-space:pre-wrap;overflow-wrap:anywhere}`;
+  const cardSelector = '[aria-label^="Open "]';
+  const columnOf = heading => heading.closest('div.flex-1');
+  const mirrorLegacy = () => {
+    if (!document.getElementById('dashboard-legacy-style')) {
+      const style = document.createElement('style'); style.id = 'dashboard-legacy-style'; style.textContent = css; document.head.append(style);
     }
-    const boardLoaded = !!document.querySelector('[aria-label^="Open "]');
-    for (const heading of document.querySelectorAll('.flex.items-center.justify-between.mb-4 h3')) {
-      if (heading.textContent.trim() !== foldStatus) continue;
-      const column = heading.closest('div.flex-1');
+    const headings = [...document.querySelectorAll('.flex.items-center.justify-between.mb-4 h3')];
+    const byText = new Map(headings.map(h => [h.textContent.trim(), h]));
+    const wanted = new Map();
+    for (const [status, rule] of Object.entries(legacy)) {
+      const heading = byText.get(status) ?? (status === 'Verifying' ? byText.get(label) : undefined);
+      const column = heading && columnOf(heading);
       if (!column) continue;
-      const count = column.querySelectorAll('[aria-label^="Open "]').length;
-      const mode = boardLoaded && count === 0 ? 'empty' : foldOpen || !boardLoaded ? 'open' : 'collapsed';
-      if (column.dataset.dashboardFold !== mode) column.dataset.dashboardFold = mode;
-      let control = column.querySelector(':scope>[data-dashboard-fold-control]');
-      if (!control) {
-        control = document.createElement('button'); control.type = 'button'; control.setAttribute('data-dashboard-fold-control', '');
-        control.addEventListener('click', () => {
-          foldOpen = !foldOpen;
-          try {sessionStorage.setItem('dashboard-fold-awaiting', foldOpen ? 'open' : 'closed');} catch {}
-          refresh();
-        });
-        column.append(control);
+      // Hide unconditionally: an empty (or still loading) board must not bring the legacy columns back.
+      if (!column.hasAttribute('data-dashboard-legacy-column')) column.setAttribute('data-dashboard-legacy-column', '');
+      for (const card of column.querySelectorAll(cardSelector)) {
+        if (!wanted.has(rule.target)) wanted.set(rule.target, []);
+        wanted.get(rule.target).push({card, badge: rule.badge});
       }
-      // Collapsed rail: horizontal count pill on top, upright vertical label below (no rotated glyphs overlapping).
-      const signature = `${mode}:${count}`;
-      if (control.dataset.foldSignature !== signature) {
-        control.dataset.foldSignature = signature;
-        if (mode === 'collapsed') {
-          const label = document.createElement('span'); label.className = 'dashboard-fold-label'; label.textContent = '承認待ち';
-          const number = document.createElement('span'); number.className = 'dashboard-fold-count'; number.textContent = `${count}件`;
-          control.replaceChildren(label, document.createTextNode(' '), number);
-        } else control.textContent = `承認待ち ${count}件を折り畳む`;
-      }
-      const expanded = String(mode !== 'collapsed');
-      if (control.getAttribute('aria-expanded') !== expanded) control.setAttribute('aria-expanded', expanded);
-      const aria = mode === 'collapsed' ? `承認待ち ${count}件を表示する` : `承認待ち ${count}件の列を折り畳む`;
-      if (control.getAttribute('aria-label') !== aria) control.setAttribute('aria-label', aria);
-      control.hidden = mode === 'empty' || !boardLoaded;
+    }
+    for (const target of new Set(Object.values(legacy).map(rule => rule.target))) {
+      const heading = byText.get(target), column = heading && columnOf(heading);
+      if (!column) continue;
+      let holder = column.querySelector(':scope>[data-dashboard-legacy-proxies]');
+      const entries = wanted.get(target) ?? [];
+      if (!entries.length) { holder?.remove(); continue; }
+      if (!holder) { holder = document.createElement('div'); holder.setAttribute('data-dashboard-legacy-proxies', ''); column.append(holder); }
+      // Rebuild only when the mirrored set or its text changed, so the observer does not loop on its own writes.
+      const signature = entries.map(({card, badge}) => `${badge}|${(card.textContent || '').trim()}`).join('\n');
+      if (holder.dataset.signature === signature) continue;
+      holder.dataset.signature = signature;
+      holder.replaceChildren(...entries.map(({card, badge}) => {
+        const proxy = document.createElement('button'); proxy.type = 'button'; proxy.className = 'dashboard-legacy-proxy';
+        proxy.setAttribute('aria-label', `${badge}から表示: ${(card.textContent || '').trim().slice(0, 80)}`);
+        const tag = document.createElement('span'); tag.className = 'dashboard-legacy-badge'; tag.textContent = `${badge}から表示（要確認）`;
+        const text = document.createElement('span'); text.className = 'dashboard-legacy-text'; text.textContent = (card.textContent || '').trim();
+        proxy.append(tag, text);
+        proxy.addEventListener('click', () => card.click());
+        return proxy;
+      }));
     }
   };
   const selector = '.flex.items-center.justify-between.mb-4 h3, option[value="Verifying"], span.rounded-circle, span.shrink-0.rounded-md';
   const refresh = () => {
-    foldColumn();
+    mirrorLegacy();
     for (const element of document.querySelectorAll(selector)) {
       // Only a sole status text node; never rewrite task titles, prose or form values.
       if (element.childNodes.length !== 1 || element.firstChild.nodeType !== 3) continue;

@@ -1,5 +1,9 @@
 import { createHash } from 'node:crypto';
-export const statuses = ['To Do', 'In Progress', 'Awaiting Approval', 'Blocked', 'Verifying', 'Done'];
+export const statuses = ['To Do', 'In Progress', 'Blocked', 'Done'];
+// Read-only compatibility for stored cards written before the four-column board. Nothing is deleted or marked Done:
+// the original value is surfaced as `legacyStatus` so the owner can triage. Writes accept only the four statuses.
+export const legacyStatusMap = Object.freeze({ 'Awaiting Approval': 'Blocked', 'Verifying': 'In Progress' });
+export const normalizeStatus = status => Object.hasOwn(legacyStatusMap, status) ? { status: legacyStatusMap[status], legacyStatus: status } : { status };
 export const groups = ['現行', '要棚卸し', '完了履歴'];
 export class Problem extends Error { constructor(status, message) { super(message); this.status = status; } }
 export const emptyBoard = () => ({ revision: 0, tasks: [], receipts: {}, audit: [] });
@@ -22,7 +26,8 @@ export function publicTask(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Problem(503, 'Invalid stored task');
   const input = Object.fromEntries(['id', 'title', 'status', 'owner', 'group', 'detail', 'lastConfirmedAt'].map(key => [key, value[key]]));
   if (!Number.isSafeInteger(value.version) || value.version < 1) throw new Problem(503, 'Invalid stored task');
-  return { ...taskInput(input), version: value.version, updatedAt: canonicalTime(value.updatedAt) };
+  const { status, legacyStatus } = normalizeStatus(input.status);
+  return { ...taskInput({ ...input, status }), ...(legacyStatus ? { legacyStatus } : {}), version: value.version, updatedAt: canonicalTime(value.updatedAt) };
 }
 export function publicSnapshot(board) {
   if (!board || !Number.isSafeInteger(board.revision) || board.revision < 0 || !Array.isArray(board.tasks) || board.tasks.length > 1000) throw new Problem(503, 'Invalid stored board');
