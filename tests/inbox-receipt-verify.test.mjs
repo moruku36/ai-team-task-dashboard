@@ -2,7 +2,7 @@
 // Success needs positive evidence: receipt identity and times, a trusted prior state, recomputed hashes, an unambiguous real card, no open owner question.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {sha256, verifyDelta, batchVerdict, planApply, deltaFingerprint, assertionCheck, assertionFailures, findOwnerConfirmation, matchOwnerConfirmation, validHash, validInstant} from '../scripts/inbox-receipt-verify.mjs';
+import {sha256, verifyDelta, batchVerdict, batchSummary, planApply, deltaFingerprint, assertionCheck, assertionFailures, findOwnerConfirmation, matchOwnerConfirmation, validHash, validInstant} from '../scripts/inbox-receipt-verify.mjs';
 
 const NOW = Date.parse('2026-10-22T00:00:00Z');
 const HA = sha256('synthetic-before'), HB = sha256('synthetic-after');
@@ -361,4 +361,26 @@ test('individual and batch verdicts agree for success, mismatch, insufficient ev
   assert.equal(batchVerdict([]), 'unverified');
   // nothing that can verify is reachable without the evidence
   for (const strip of [{priorCard: undefined}, {recomputedHashes: undefined}, {receipt: receipt({before_hash: undefined})}, {receipt: undefined}]) assert.notEqual(run({card: goodCard, ...strip}).verdict, 'applied_verified', JSON.stringify(Object.keys(strip)));
+});
+
+test('batchSummary carries the deltas\' caveats to the batch (de-duplicated, never dropped) without making any verdict more successful', () => {
+  const record = confirmationOf();
+  const withRecord = () => run({delta: doneDelta, ownerConfirmations: [record], card: goodCard});
+  const a = withRecord(), b = withRecord(), plain = run({card: goodCard});
+  assert.deepEqual(a.caveats, ['owner_confirmation_record_authenticity_not_verified']);
+  assert.deepEqual(plain.caveats, []);
+  const summary = batchSummary([a, b, plain]);
+  assert.deepEqual(summary.caveats, ['owner_confirmation_record_authenticity_not_verified'], 'duplicates are merged');
+  assert.equal(summary.verdict, batchVerdict([a, b, plain]), 'the verdict is exactly the batch verdict');
+  // caveats stay even when the batch is not a success, and are empty when no delta has one
+  const mixed = batchSummary([a, run({card: staleCard})]);
+  assert.equal(mixed.verdict, 'mismatch'); assert.deepEqual(mixed.caveats, ['owner_confirmation_record_authenticity_not_verified']);
+  assert.deepEqual(batchSummary([plain]), {verdict: 'applied_verified', caveats: []});
+  assert.deepEqual(batchSummary([]), {verdict: 'unverified', caveats: []});
+  // a delta result without a caveats field (older callers) does not break the summary
+  assert.deepEqual(batchSummary([{verdict: 'unverified'}]), {verdict: 'unverified', caveats: []});
+  // a used record on a delta that otherwise verifies: the delta and the batch are applied_verified AND still carry the caution
+  const reopenOk = run({delta: doneDelta, priorCard: {...priorCard, status: 'Done'}, ownerConfirmations: [record], card: goodCard});
+  assert.equal(reopenOk.verdict, 'applied_verified');
+  assert.deepEqual(batchSummary([reopenOk]), {verdict: 'applied_verified', caveats: ['owner_confirmation_record_authenticity_not_verified']});
 });

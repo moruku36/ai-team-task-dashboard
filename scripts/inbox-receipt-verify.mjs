@@ -287,6 +287,10 @@ export const batchVerdict = results => !results.length ? 'unverified'
   : results.every(r => ['unverified', 'content_present_no_recorded_change', 'applied_verified'].includes(r.verdict)) ? 'unverified'
   : 'not_fully_applied';
 
+// Batch result with the cautions of its deltas carried along (de-duplicated, never dropped): e.g. a used owner-confirmation record whose
+// authenticity was not verified. The verdict is exactly batchVerdict(results); caveats never turn a verdict into a more successful one.
+export const batchSummary = results => ({verdict: batchVerdict(results), caveats: [...new Set(results.flatMap(r => r.caveats ?? []))]});
+
 // Duplicate prevention. `ledger` maps event_id -> fingerprint of the delta already applied (append-only record kept by
 // the updater). The same packet can be re-sent safely; the same event_id with different content is a conflict.
 export const deltaFingerprint = delta => sha256(JSON.stringify(canonical(delta)));
@@ -306,7 +310,8 @@ export function planApply(ledger, packet, inboxBatches = []) {
 // --map <recorded-prefix>=<actual-prefix> lets the owner declare that a recorded path prefix is the same storage as another
 // prefix (e.g. a packaged-app redirect). Nothing is guessed, moved or copied; without it an unreachable path is reported as such.
 // --confirmations <file> supplies existing owner-confirmation records (see matchOwnerConfirmation); without it none are assumed.
-// The CLI passes no prior cards and no recomputed hashes, so it can never print applied_verified: it reports the evidence it can see.
+// The CLI passes no prior cards and no recomputed hashes, so it can never print applied_verified: its output is reference information only
+// (`reference_only: true`, with the missing inputs listed in `limits`). Per-delta and batch `caveats` are always printed.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const args = process.argv.slice(2);
   const take = name => { const i = args.indexOf(name); return i < 0 ? undefined : args.splice(i, 2)[1]; };
@@ -326,7 +331,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         let receipt; try { receipt = read(join(remap(batch.receipt_directory), `${delta.event_id}.json`)); } catch { /* no receipt yet */ }
         return verifyDelta({batch, packetBytes: bytes, packet, delta, receipt, card: cards[receipt?.target_task_id ?? delta.target_id_hint], ownerConfirmations});
       });
-      console.log(JSON.stringify({batch_id: batch.batch_id, inbox_state: batch.application_state, verified: batchVerdict(results), deltas: results.map(r => ({event_id: r.event_id, verdict: r.verdict, problems: r.problems}))}));
+      const summary = batchSummary(results);
+      console.log(JSON.stringify({batch_id: batch.batch_id, inbox_state: batch.application_state, verified: summary.verdict, caveats: summary.caveats, reference_only: true,
+        limits: ['no_prior_card_supplied', 'no_recomputed_hashes_supplied'],
+        deltas: results.map(r => ({event_id: r.event_id, verdict: r.verdict, problems: r.problems, caveats: r.caveats}))}));
     } catch { console.log(JSON.stringify({batch_id: batch.batch_id, verified: 'packet_unparseable'})); }
   }
 }
