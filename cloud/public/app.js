@@ -6,11 +6,13 @@ const legacyNames = { 'Awaiting Approval': '旧「承認待ち」', 'Verifying':
 const KEEP = 'keep-legacy';
 const keepOption = (() => { const option = document.createElement('option'); option.textContent = '旧状態のまま（変更しない）'; option.value = KEEP; option.hidden = true; return option; })();
 const statusChoice = (task, request) => request ? (request.statusChange === 'explicit' || !task.legacyStatus ? request.task.status : KEEP) : (task.legacyStatus ? KEEP : task.status);
-const acknowledges = (saved, request, current) => taskFields.filter(key => key !== 'legacyStatus').every(key => saved[key] === request.task[key]) &&
-  (request.statusChange === 'explicit' || !current?.legacyStatus ? saved.legacyStatus === undefined : saved.legacyStatus === current.legacyStatus);
+const acknowledges = (saved, request, legacyAtRequest) => taskFields.filter(key => key !== 'legacyStatus').every(key => saved[key] === request.task[key]) &&
+  (request.statusChange === 'explicit' || !legacyAtRequest ? saved.legacyStatus === undefined : saved.legacyStatus === legacyAtRequest);
 const groups = ['現行', '要棚卸し', '完了履歴'];
 let snapshot = { tasks: [] }, group = '現行', online = false, selected, busy = false;
 const pendingRequests = new Map();
+// The stored legacy status the card had when its save request was created: kept per request, because the dialog (and `selected`) may be closed before the response arrives.
+const pendingLegacy = new Map();
 const acknowledgedVersions = new Map();
 let readGeneration = 0;
 let detailGeneration = 0, selectedStale = false;
@@ -129,18 +131,19 @@ el('save').onclick = async () => {
       lastConfirmedAt: selected.lastConfirmedAt, status: keep ? selected.status : choice },
     ...(selected.legacyStatus && !keep ? { statusChange: 'explicit' } : {}) };
   pendingRequests.set(taskId, request);
+  if (!pendingLegacy.has(taskId)) pendingLegacy.set(taskId, selected.legacyStatus ?? null);
   ++readGeneration; // Reads started before this write cannot acknowledge a newer state.
   busy = true; el('save').disabled = true; el('status').disabled = true;
   try {
     const response = await fetch('/api/tasks', { method: 'POST', credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(15000), headers: { 'Content-Type': 'application/json', 'X-Dashboard-Write': '1' }, body: JSON.stringify(request) });
     if (response.status === 409) {
-      pendingRequests.delete(taskId);
+      pendingRequests.delete(taskId); pendingLegacy.delete(taskId);
       if (generation === detailGeneration) { el('saveNotice').textContent = '別の更新がありました。詳細を閉じて、最新のカードを開き直してください。'; selected = undefined; }
     }
     else {
       if (!response.ok) throw new Error(); const saved = await response.json();
-      if (!validTask(saved) || !acknowledges(saved, request, selected?.id === taskId ? selected : undefined) || saved.version !== request.expectedVersion + 1) throw new Error('Unconfirmed acknowledgement');
-      pendingRequests.delete(taskId);
+      if (!validTask(saved) || !acknowledges(saved, request, pendingLegacy.get(taskId)) || saved.version !== request.expectedVersion + 1) throw new Error('Unconfirmed acknowledgement');
+      pendingRequests.delete(taskId); pendingLegacy.delete(taskId);
       acknowledgedVersions.set(taskId, Math.max(acknowledgedVersions.get(taskId) ?? 0, saved.version));
       if (generation === detailGeneration) { selected = saved; el('status').disabled = false; el('saveNotice').textContent = '保存しました'; }
     }

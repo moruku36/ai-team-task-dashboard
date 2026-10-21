@@ -102,3 +102,39 @@ test('a non-legacy card is unaffected by the intent flag', async t => {
   const r = await a.post({ requestId: 'plain-card-1', expectedVersion: 1, task: { ...task, id: 'N-1', title: 'Legacy N-1', status: 'Blocked' } });
   assert.equal(r.status, 200); assert.equal((await raw(store, 'N-1')).status, 'Blocked');
 });
+
+test('closing the dialog while the save is in flight still acknowledges a correct response (no mutable "selected" involved)', async t => {
+  const store = legacyStore(), a = await app(store); t.after(() => a.close());
+  const page = await ui(a);
+  for (const [id, choose, expectStatus, expectLegacy] of [['L-1', 'keep-legacy', 'Verifying', 'Verifying'], ['L-2', 'Done', 'Done', undefined]]) {
+    page.open(id); page.el('status').value = choose;
+    const saving = page.el('save').onclick();
+    page.el('detail').onclose();                       // the dialog closes before the response is processed
+    await saving;
+    assert.equal(runInContext('pendingRequests.size', page.context), 0, `${id}: the acknowledged request is no longer pending`);
+    assert.equal(runInContext('pendingLegacy.size', page.context), 0, `${id}: nothing left behind`);
+    assert.equal((await raw(store, id)).status, expectStatus, `${id}: stored status`);
+    const shown = (await (await a.get('/api/tasks')).json()).tasks.find(x => x.id === id);
+    assert.equal(shown.legacyStatus, expectLegacy, `${id}: legacy marker`);
+    await runInContext('refresh()', page.context);
+    const cardText = JSON.stringify(page.el('board'), (k, v) => (k === 'onclick' ? undefined : v));
+    assert.doesNotMatch(cardText, /保存結果が未確認/, `${id}: no false "unconfirmed" badge`);
+  }
+});
+
+test('a lost response is still reported as unconfirmed and re-sent with the same request id (retry behaviour is unchanged)', async t => {
+  const store = legacyStore(), a = await app(store); t.after(() => a.close());
+  const page = await ui(a);
+  let failNext = true, firstBody;
+  const original = page.context.fetch;
+  page.context.fetch = (path, options) => { if (options?.method === 'POST' && failNext) { failNext = false; firstBody = JSON.parse(options.body); return Promise.reject(new Error('offline')); } return original(path, options); };
+  page.open('L-1'); await page.save();
+  assert.match(page.el('saveNotice').textContent, /保存結果が未確認/);
+  assert.equal(runInContext('pendingRequests.size', page.context), 1);
+  page.open('L-1'); await page.save();
+  assert.equal(runInContext('pendingRequests.size', page.context), 0);
+  assert.equal((await raw(store, 'L-1')).status, 'Verifying'); assert.equal((await raw(store, 'L-1')).version, 2, 'the retry did not double-apply');
+  assert.ok(firstBody?.requestId, 'the lost attempt was a real request');
+  assert.equal(page.bodies.at(-1).requestId, firstBody.requestId, 'the retry re-sends the same request id');
+  assert.deepEqual(page.bodies.at(-1).task, firstBody.task);
+});

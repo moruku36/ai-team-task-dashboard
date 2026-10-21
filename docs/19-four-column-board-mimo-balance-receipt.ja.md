@@ -11,7 +11,8 @@
   - クラウド版（`cloud/model.mjs` の `legacyStatusMap`）は読み取り時に4状態へ寄せ、`legacyStatus` を保持します。
   - ローカル版（`scripts/status-display.js`）は旧列を常にCSSで隠し（カード0件でも）、各カードを対応する列へ表示用のコピー（プロキシ）として出します。クリックすると元のカードを開きます。
   - **保存状態の一括変更はしません。** 表示だけの変更で、IDも詳細も履歴も保たれます。
-  - **旧状態のカードを保存しても、表示上の対応は保存されません。** 詳細画面には「保存上の旧状態」と表示上の列を示し、状態の選択肢の既定は「旧状態のまま（変更しない）」です。この既定のまま保存しても、別項目だけを編集して保存しても、保存状態は旧状態のままです（更新自体は記録され、版が進みます）。保存状態が変わるのは、利用者が4つの状態のどれかを明示的に選んだときだけで、そのときは旧状態が監査履歴（`from`）に残ります。新しい状態として書き込めるのは、従来どおり4種類だけです。
+  - **旧状態のカードを保存しても、表示上の対応は保存されません。** 詳細画面には「保存上の旧状態」と表示上の列を示し、状態の選択肢の既定は「旧状態のまま（変更しない）」です。この既定のまま保存しても、別項目だけを編集して保存しても、保存状態は旧状態のままです（更新自体は記録され、版が進みます）。保存状態が変わるのは、利用者が4つの状態のどれかを明示的に選んだときだけで、そのときは旧状態が監査履歴（`from`）に残ります。新しい状態として書き込めるのは、従来どおり4種類だけです。保存中に詳細画面を閉じても、保存要求の時点の対象と旧状態を保持しているので、正常な応答は正しく受け付けます。
+  - **operator経路（更新ジョブ経由）は、明示的な状態変更に未対応です。** 旧状態のカードに表示上の状態のまま更新しても、保存状態は旧状態のままで、結果に `storedLegacyStatus` と `statusPersisted: false` が付きます（inspectは実際の保存状態を返します）。4つの状態のどれかを指定すれば、その状態が保存されます。更新ジョブ自体は変更していません。
 - 新規rootは4状態で初期化します。既存rootの `config.yml` は変更しません。旧状態は読み取り互換のため残ります。
 - クラウドのCSSも4列に合わせています。
 - 旧「承認待ち」を畳む縦長の帯（fold）の表示は、旧状態も4列内に表示する要件に置き換えました。
@@ -38,52 +39,72 @@
 受信packetに「期限 2026-10-22・外部通信の阻害」を載せたのに、receiptは `applied` で、適用前後のhashが同一、カード本文にも期限と阻害の記載がない。このとき、receiptやhash一致、読戻し成功だけでは内容の反映は証明できません。
 
 ### 検証スクリプトと、実処理の修正は別です
-`scripts/inbox-receipt-verify.mjs` は**読み取り専用の検証部品**です。これを追加しただけでは、既存の更新処理の誤判定は直っていません。更新担当（更新ジョブ）には未接続です。
+`scripts/inbox-receipt-verify.mjs` は**読み取り専用の検証部品**です。台帳・受信口・カードを自分では読まず、必要な材料はすべて呼び出し側が渡します。これを追加しただけでは、既存の更新処理の誤判定は直っていません。更新担当（更新ジョブ）には未接続です。
 
-判定は4段階（受信口への保存／更新担当の受領／対象タスクへの適用／画面反映）に分けます。所見は5種類を**別々に**保持し（`findings`）、総合判定は下の優先順位で決めます。
+**方針: 成功には肯定的な証拠が必要です。** 証拠の欠落・形式不正・未再計算・曖昧さは、成功にも「内容の矛盾」にもせず、`unverified`（または、人の判断が要るときは `needs_owner_decision`）にします。判定は4段階（受信口への保存／更新担当の受領／対象タスクへの適用／画面反映）に分けます。
+
+**呼び出し側が渡す材料**
+| 入力 | 意味 |
+|---|---|
+| `card` | 変更後に、公式の手段で読み戻したカード |
+| `priorCard` | 変更**前**のカード（信頼できる出所のもの）。変更後のカードから推定しない。なければ、完了済みカードの再開を除外できないため、成功にしない（`prior_state_unavailable`） |
+| `recomputedHashes` | `priorCard` と `card` から、receiptの契約どおりのアルゴリズムで呼び出し側が再計算した前後hash。この部品は、そのアルゴリズムを持たない |
+| `ownerConfirmations` | 既存の本人確認の記録（下記） |
+
+**hashの証拠には段階があります:** 欠落（`absent`）→ 形式不正（`malformed`。SHA-256の16進64桁でない値、例: `zzz`）→ 形式のみ（`format_only`。再計算なし、文字列が妥当なだけ）→ 再計算一致（`recomputed_match`）／再計算不一致（`recomputed_mismatch`）。`applied_verified` に必要なのは再計算一致だけです。形式のみでは `unverified` で、receiptの2つの値が互いに整合しているだけでは検証になりません。
+
+所見は5種類を**別々に**保持し（`findings`）、総合判定は下の優先順位で決めます。
 
 | 所見（`findings`） | 意味 |
 |---|---|
-| `receipt` | receiptが信頼できない（event_id・batch_idの不一致、`received_at`・`applied_at`が有効な日時でない、`applied_at`が`received_at`より前、receiptの指示時刻の欠落・不一致、applied_at・読戻しなし、対象IDの不一致） |
-| `content` | 読み戻した実カードが、packetの期待と**食い違う**（状態、期限、阻害、必須文言） |
+| `receipt` | receiptが信頼できない（event_id・batch_idの不一致、`received_at`・`applied_at`が有効な日時でない、`applied_at`が`received_at`より前、指示時刻の欠落・不一致、applied_at・読戻しなし、対象IDの不一致、hashの形式不正・再計算不一致） |
+| `content` | 読み戻した実カードが、packetの期待と**食い違う** |
 | `declaration` | packet自身の宣言とreceiptが矛盾する（`expects_no_card_change`なのにhashが変化） |
-| `insufficient` | 比較材料が足りない（`card_assertions`なし、カード未読戻し、前後hashの欠落、packetに指示時刻がない、年のない日付など） |
-| `owner` | 完了済みカードへの追記に、本人確認の記録がない／packetの自己申告だけ |
+| `insufficient` | 比較材料が足りない（`card_assertions`なし、カード・適用前状態の未提供、hashの欠落・未再計算、packetに指示時刻や`target_id_hint`がない、曖昧な期限・阻害など） |
+| `owner` | 本人確認の問題が未解決（完了済みカードの再開、自己申告だけ、記録が条件を満たさない） |
 
 **総合判定の優先順位**（上から最初に当てはまるもの。所見はすべて残ります）
 
 | 順位 | 判定 | 条件 |
 |---|---|---|
 | 1 | `inbox_integrity_error` | packetのhash・batch_idが受信口の記録と一致しない |
-| 2 | `needs_owner_decision` | 完了（Done）済みカードを、本人確認の記録なしに再開・追記しようとしている |
+| 2 | `needs_owner_decision` | `owner` 所見が1つでもある（カードがDoneかどうかに関わらず、成功にしない） |
 | 3 | `saved_not_received` | receiptがない |
-| 4 | `received_not_applied` | receiptはあるが `applied` ではない |
-| 5 | `receipt_inconsistent` | `receipt` 所見がある |
-| 6 | `mismatch_content_not_reflected` | `content` 所見がある（比較材料不足があっても、矛盾は隠さない） |
-| 7 | `declaration_inconsistent` | `declaration` 所見がある |
-| 8 | `unverified` | `insufficient` 所見がある（`card_assertions` 導入前のpacketはここに入り、破損扱いにしません） |
-| 9 | `content_present_no_recorded_change` | 内容は既にカードにあるが、前後hashが同一（変更の記録がない） |
-| 10 | `applied_verified`（画面が未反映なら `applied_not_displayed`） | receiptが整合し、前後hashが揃って変化し、実カードの内容がpacketの期待を満たす |
+| 4 | `receipt_inconsistent` | このeventの有効なreceiptではない（別のevent・batch、`received_at`が無効、指示時刻が欠落・変更）。receiptの状態が何であっても「受領済み」にしない |
+| 5 | `received_not_applied` | 有効なreceiptはあるが `applied` ではない |
+| 6 | `receipt_inconsistent` | `applied` だが、適用時刻・読戻し・対象ID・hashに問題がある |
+| 7 | `mismatch_content_not_reflected` | `content` 所見がある（比較材料不足があっても、矛盾は隠さない） |
+| 8 | `declaration_inconsistent` | `declaration` 所見がある |
+| 9 | `unverified` | `insufficient` 所見がある（`card_assertions` 導入前のpacketはここに入り、破損扱いにしません） |
+| 10 | `content_present_no_recorded_change` | 内容は既にカードにあるが、再計算した前後hashが同一（変更の記録がない） |
+| 11 | `applied_verified`（画面が未反映なら `applied_not_displayed`） | 上のすべてを満たす |
 
-日時は、タイムゾーン付きのISO 8601で、実在する暦日のものだけを有効とします（`validInstant`）。
+バッチの判定は、個々の判定と整合させます。すべてが `applied_verified` のときだけ `applied_verified`。不一致・不整合が1つでもあれば `mismatch`、本人判断待ちが1つでもあれば `needs_owner_decision`、それ以外で証拠不足があれば `unverified` です。
 
-`card_assertions`（状態・期限・阻害・阻害要約・必須文言）は**期待値の宣言にすぎず**、呼び出し側が公式CLIなどで読み戻した実カードと必ず照合します。空の宣言（`{}` など）は検証とみなしません。
+日時は、タイムゾーン付きのISO 8601で、実在する暦日のものだけを有効とします。
 
-**期限の照合:** 部分文字列ではなく、日付として比較します（`10/2` は `10/22` ではなく、`1/5` は `11/5` ではなく、年が違えば別の日です）。カードに年のない日付（`10/22`、`10月22日`）しかない場合は、1つの年に確定できないため一致とはせず、`unverified`（`due_at_year_unconfirmed`）にします。
+**期限の照合:** `due_at` の値自体も厳密に検証します（`YYYY-MM-DD`、またはタイムゾーン付きの完全な日時。末尾に余計な文字があれば無効）。カード側は、構造化された項目（`due_at` `due` `deadline`）か、期限のラベル（`Due:` `Deadline:` `期限:` `締切:` `期日:`）で始まる行の日付だけを期限とします。本文中のほかの日付が一致しても、期限一致とは扱いません。日付として比較し（`10/2` は `10/22` ではなく、別の年は別の日）、年のない日付、複数の候補、対応外の形式（`Oct 22`、`令和8年…`、`tomorrow` など）、期限欄に当たらない日付は、一意に決められないため `unverified` にします。日付が全くなければ、期限が反映されていない（内容の不一致）です。
 
-**阻害の照合:** 単語 `blocked` の有無ではなく、カードの状態が `Blocked` であること、または明示的な阻害の項目（`Blocker:` `阻害:` `待ち理由:` などの行や、`blocker` フィールドで、値が `none`・`なし` などでないもの）があることで判定します。「not blocked」は阻害ありとは扱いません。
+**阻害の照合:** 構造化された値（`blocked`、`blocker`）を優先し、次に `Blocker:` `阻害:` `待ち理由:` などの行で判定します。`none` `None.` `No blockers.` `not blocked` `なし。` `特になし` などは、句読点があっても阻害なしです。実際の説明があれば阻害ありです。空、`TBD`、不明、否定語や解消語が混じる値（`not resolving`、`解消済み` など）は解釈できないので `unverified` です。本文中の単語 `blocked` は見ません。カードの状態が `Blocked` で、阻害欄が none の場合も、矛盾が曖昧なので `unverified` です。
 
 ### `expects_no_card_change` のhash条件
-通常、`applied_verified` には「前後hashが両方あり、かつ異なる」ことが必要です（欠落は `unverified`、同一は `content_present_no_recorded_change`）。
-`card_assertions.expects_no_card_change: true` のdeltaは、逆に**前後hashが両方あり、かつ同一**であることを必須とします。欠落は `unverified`、変化していれば宣言との不整合として `declaration_inconsistent` で、どちらも `applied_verified` にはなりません。このフラグは、hashに求める条件を変えるだけで、receiptの整合、日時、実カードの内容照合は一切緩めません。
+通常、`applied_verified` には「再計算した前後hashが揃って、かつ異なる」ことが必要です（同一は `content_present_no_recorded_change`）。
+`card_assertions.expects_no_card_change: true` のdeltaは、逆に**再計算した前後hashが両方あり、かつ同一**であることを必須とします。欠落や未再計算は `unverified`、変化していれば宣言との不整合として `declaration_inconsistent` です。このフラグは、hashに求める条件を変えるだけで、receiptの整合、日時、適用前状態、実カードの内容照合は一切緩めません。
 
 ### 本人確認の証拠
-packet内の `owner_confirmed_target_task_id` は自己申告であり、本人確認とは扱いません（対象IDの置き換えにも使いません）。確認は、既存の確認記録（`ownerConfirmations`: `event_id`、`task_id`、`confirmed_at`、`basis_id`）との照合で行います。記録がそのeventと、receiptが指す対象タスクを名指しし、有効な `confirmed_at` を持ち、deltaが `source_message_ids` を持つ場合はその1つが `basis_id` と一致するときだけ、確認済みとします。照合材料がなければ `needs_owner_decision` のままです。この部品は確認記録を作らず、読み取りもしません（呼び出し側が既存の記録を渡す）。
+packet内の `owner_confirmed_target_task_id` は自己申告であり、本人確認とは扱いません（対象IDの置き換えにも使いません）。確認は、呼び出し側が渡す既存の確認記録（`ownerConfirmations`: `event_id`、`task_id`、`confirmed_at`、`basis_id`）との照合で行い、次の**すべて**を満たす記録だけを採用します。
+- そのeventの記録で、`task_id` が receiptの対象タスクであり、かつpacket自身の `target_id_hint`（宣言があれば `owner_confirmed_target_task_id`）と同じ。記録があっても、対象IDの不一致は免除されない。
+- 指示との対応: `basis_id` が、deltaの `source_message_ids` のどれかと一致する（deltaにそれがなければ確認できない）。
+- 時刻: `confirmed_at` が、packetの指示時刻より古くなく（古い記録の流用不可）、現在より未来でなく、receiptの `applied_at` より後でない（適用後の記録の流用不可）。どちらかの時刻が解釈できず順序を確定できなければ、採用しない。
+
+未解決の確認問題（完了済みカードの再開、自己申告だけ、記録が条件を満たさない）は、カードがDoneでなくても `needs_owner_decision` で、個別・バッチとも成功にしません。完了済みかどうかは、**変更前**のカード（`priorCard`）で判定します。
+
+**限界:** この部品は、確認記録が本物かどうか（改ざん・偽造されていないか）を検証できません。条件を満たした記録は `matched_unauthenticated_input`（結果の `caveats` に `owner_confirmation_record_authenticity_not_verified`）と表し、「認証済み」とは呼びません。記録の出所の確かさは、渡す側の責任です。この部品は確認記録を作らず、読み取りもしません。
 
 ### 実処理への接続案（未実施・本人の確認が必要）
 更新担当の判定ロジックはこのリポジトリの外（更新ジョブの指示文）にあります。必要な最小変更は次のとおりです。
 1. dotが作るpacketに、反映後にカードが満たすべき `card_assertions`（状態・期限・阻害要約）を載せる。既存packetは変更しない。
-2. 更新担当の「適用済み」判定を、receiptやhash一致から、**公式CLIでの読戻し結果と `card_assertions` の照合**（`verifyDelta` 相当）に置き換える。`applied_verified` 以外では `applied` と書かない。`unverified` は `received_unapplied` か `pending` にとどめる。
+2. 更新担当の「適用済み」判定を、receiptやhash一致から、**公式CLIでの読戻し結果と `card_assertions` の照合**（`verifyDelta` 相当）に置き換える。そのために、適用前のカードの保存と、receiptの契約どおりのhash再計算を更新担当側に用意する（この部品はどちらも持たない）。`applied_verified` 以外では `applied` と書かない。`unverified` は `received_unapplied` か `pending` にとどめる。
 3. 再実行時は `planApply`（event_idと内容fingerprint）で、同一packetの再送を skip、同じevent_idで内容が違えば conflict にする。台帳の手修正で見かけだけ解決しない。
 4. 完了済みカードへの追記は、既存の本人確認の記録との照合（`ownerConfirmations`、packet内の自己申告だけでは不可）を必須にする。未承認の新規タスクは作らない。
 
