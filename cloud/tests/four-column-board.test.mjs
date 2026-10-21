@@ -30,11 +30,21 @@ test('unknown statuses are still rejected and writes accept only the four status
   assert.equal(ok.status, 'Blocked');
 });
 
-test('re-saving a legacy card records the old status in the audit trail', async () => {
+test('re-saving a legacy card with an explicit status records the old status in the audit trail', async () => {
   const store = new FixtureStore(); store.state = { ...emptyBoard(), revision: 1, tasks: [stored('SYNTH-1', 'Verifying', 1)] };
-  await mutate(store, { requestId: 'legacy-resave-1', expectedVersion: 1, task: { ...task, id: 'SYNTH-1', status: 'In Progress' } });
+  await mutate(store, { requestId: 'legacy-resave-1', expectedVersion: 1, statusChange: 'explicit', task: { ...task, id: 'SYNTH-1', status: 'In Progress' } });
   const board = await store.read();
   assert.deepEqual([board.audit.at(-1).from, board.audit.at(-1).to], ['Verifying', 'In Progress']);
+  assert.equal(board.tasks[0].status, 'In Progress');
+});
+
+test('re-saving a legacy card without an explicit status keeps the stored legacy status (audit shows no status change)', async () => {
+  const store = new FixtureStore(); store.state = { ...emptyBoard(), revision: 1, tasks: [stored('SYNTH-1', 'Verifying', 1)] };
+  const saved = await mutate(store, { requestId: 'legacy-resave-2', expectedVersion: 1, task: { ...task, id: 'SYNTH-1', status: 'In Progress', detail: 'edited' } });
+  const board = await store.read();
+  assert.equal(board.tasks[0].status, 'Verifying'); assert.equal(board.tasks[0].detail, 'edited');
+  assert.deepEqual([board.audit.at(-1).from, board.audit.at(-1).to], ['Verifying', 'Verifying']);
+  assert.deepEqual([saved.status, saved.legacyStatus], ['In Progress', 'Verifying']);
 });
 
 test('cloud stylesheet lays out exactly as many columns as the board has statuses (static check, not a browser measurement)', async () => {

@@ -1,6 +1,13 @@
 const states = ['To Do', 'In Progress', 'Blocked', 'Done'];
 const names = ['To Do', 'In Progress', 'Blocked', 'Done'];
 const legacyNames = { 'Awaiting Approval': '旧「承認待ち」', 'Verifying': '旧「最終確認」' };
+// Legacy-status cards are only displayed as their mapped status. The detail dialog defaults to "keep as is": saving without
+// choosing a status never persists the display mapping; choosing any of the four statuses is an explicit change.
+const KEEP = 'keep-legacy';
+const keepOption = (() => { const option = document.createElement('option'); option.textContent = '旧状態のまま（変更しない）'; option.value = KEEP; option.hidden = true; return option; })();
+const statusChoice = (task, request) => request ? (request.statusChange === 'explicit' || !task.legacyStatus ? request.task.status : KEEP) : (task.legacyStatus ? KEEP : task.status);
+const acknowledges = (saved, request, current) => taskFields.filter(key => key !== 'legacyStatus').every(key => saved[key] === request.task[key]) &&
+  (request.statusChange === 'explicit' || !current?.legacyStatus ? saved.legacyStatus === undefined : saved.legacyStatus === current.legacyStatus);
 const groups = ['現行', '要棚卸し', '完了履歴'];
 let snapshot = { tasks: [] }, group = '現行', online = false, selected, busy = false;
 const pendingRequests = new Map();
@@ -73,8 +80,9 @@ function render() {
         if (busy) return;
         ++detailGeneration; selected = task; selectedStale = false; const pending = pendingRequests.get(task.id);
         el('detailTitle').textContent = task.title;
-        el('detailBody').textContent = `${task.id} / 主担当: ${task.owner}\n更新: ${time(task.updatedAt)} / 確認: ${time(task.lastConfirmedAt)}\n\n${task.detail}`;
-        el('status').value = pending?.task.status ?? task.status; el('status').disabled = Boolean(pending);
+        el('detailBody').textContent = `${task.id} / 主担当: ${task.owner}${task.legacyStatus ? ` / 保存上の旧状態: ${task.legacyStatus}（表示上は ${task.status} 列。自動では変更されません）` : ''}\n更新: ${time(task.updatedAt)} / 確認: ${time(task.lastConfirmedAt)}\n\n${task.detail}`;
+        keepOption.hidden = !task.legacyStatus;
+        el('status').value = statusChoice(task, pending); el('status').disabled = Boolean(pending);
         el('saveNotice').textContent = pending ? '保存結果が未確認です。同じ要求ID・内容で再送します。' : '';
         el('save').disabled = !online; el('detail').showModal();
       }; column.append(card);
@@ -108,16 +116,18 @@ async function refresh() {
   el('save').disabled = busy || !online || !selected || selectedStale;
 }
 el('detail').onclose = () => { ++detailGeneration; selected = undefined; selectedStale = false; el('save').disabled = true; };
-el('status').append(...states.map((s, i) => { const option = node('option', names[i]); option.value = s; return option; }));
+el('status').append(keepOption, ...states.map((s, i) => { const option = node('option', names[i]); option.value = s; return option; }));
 el('search').oninput = render; el('refresh').onclick = refresh;
-el('status').onchange = () => { const pending = selected && pendingRequests.get(selected.id); if (pending) el('status').value = pending.task.status; };
+el('status').onchange = () => { const pending = selected && pendingRequests.get(selected.id); if (pending) el('status').value = statusChoice(selected, pending); };
 el('save').onclick = async () => {
   if (!selected || selectedStale || busy || !online) return;
   const generation = detailGeneration;
   const taskId = selected.id;
+  const choice = el('status').value, keep = choice === KEEP;
   const request = pendingRequests.get(taskId) ?? { requestId: crypto.randomUUID(), expectedVersion: selected.version,
     task: { id: selected.id, title: selected.title, owner: selected.owner, group: selected.group, detail: selected.detail,
-      lastConfirmedAt: selected.lastConfirmedAt, status: el('status').value } };
+      lastConfirmedAt: selected.lastConfirmedAt, status: keep ? selected.status : choice },
+    ...(selected.legacyStatus && !keep ? { statusChange: 'explicit' } : {}) };
   pendingRequests.set(taskId, request);
   ++readGeneration; // Reads started before this write cannot acknowledge a newer state.
   busy = true; el('save').disabled = true; el('status').disabled = true;
@@ -129,7 +139,7 @@ el('save').onclick = async () => {
     }
     else {
       if (!response.ok) throw new Error(); const saved = await response.json();
-      if (!validTask(saved) || !sameTask(saved, request.task, false) || saved.version !== request.expectedVersion + 1) throw new Error('Unconfirmed acknowledgement');
+      if (!validTask(saved) || !acknowledges(saved, request, selected?.id === taskId ? selected : undefined) || saved.version !== request.expectedVersion + 1) throw new Error('Unconfirmed acknowledgement');
       pendingRequests.delete(taskId);
       acknowledgedVersions.set(taskId, Math.max(acknowledgedVersions.get(taskId) ?? 0, saved.version));
       if (generation === detailGeneration) { selected = saved; el('status').disabled = false; el('saveNotice').textContent = '保存しました'; }

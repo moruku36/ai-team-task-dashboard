@@ -199,7 +199,8 @@ test('successful write ACK sets a floor that a post-write stale GET cannot roll 
 
 test('legacy-status cards render inside the four columns with a legacy badge; no extra column; storage untouched', async () => {
   const board = { ...emptyBoard(), revision: 3, tasks: ['Verifying', 'Awaiting Approval', 'Done'].map((status, i) => ({ id: `LEG-${i}`, title: `Legacy ${status}`, status, owner: 'synthetic-agent', group: '現行', detail: '合成詳細', lastConfirmedAt: null, version: i + 1, updatedAt: '2026-10-20T00:00:00.000Z' })) };
-  const store = { async read() { return structuredClone(board); }, async transaction() { throw new Error('read-only test'); } };
+  let writeAttempts = 0;
+  const store = { async read() { return structuredClone(board); }, async transaction() { writeAttempts++; throw new Error('read-only test'); } };
   const a = await app(store);
   try {
     const elements = new Map(); const el = id => { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id); };
@@ -213,6 +214,7 @@ test('legacy-status cards render inside the four columns with a legacy badge; no
     assert.match(text(columns[1]), /Legacy Verifying/); assert.match(text(columns[1]), /旧「最終確認」から表示/);
     assert.match(text(columns[2]), /Legacy Awaiting Approval/); assert.match(text(columns[2]), /旧「承認待ち」から表示/);
     assert.doesNotMatch(text(columns[3]), /Legacy Verifying|Legacy Awaiting/); assert.doesNotMatch(text(columns[3]), /旧「/);
-    assert.equal(board.tasks[0].status, 'Verifying');
+    assert.equal(writeAttempts, 0, 'rendering legacy cards never attempts a write');
+    assert.equal((await store.read()).tasks[0].status, 'Verifying');
   } finally { await a.close(); }
 });
