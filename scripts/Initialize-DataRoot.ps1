@@ -1,10 +1,11 @@
 <#
 .SYNOPSIS
-Initializes the separate shared no-git task data root with the official CLI, then sets the six statuses.
+Initializes the separate shared no-git task data root with the official CLI, then sets the four statuses (To Do / In Progress / Blocked / Done).
+-LegacySixStatuses is for compatibility tests of pre-change data roots only. Existing config is never rewritten.
 Default root: %LOCALAPPDATA%\ai-team-task-dashboard\data. Existing config is preserved untouched.
 #>
 [CmdletBinding()]
-param([string]$DataRoot, [string]$ExePath)
+param([string]$DataRoot, [string]$ExePath, [switch]$LegacySixStatuses)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'BacklogCommon.ps1')
 
@@ -30,8 +31,9 @@ if ($code -ne 0) { throw "backlog init failed (exit $code)" }
 $generated = '(?m)^statuses: \["To Do", "In Progress", "Done"\]\r?$'
 $text = [IO.File]::ReadAllText($configPath)
 if ($text -notmatch $generated) { throw "Unexpected generated config; statuses left unchanged: $configPath" }
-$list = ($script:DesiredStatuses | ForEach-Object { '"' + $_ + '"' }) -join ', '
+$statusSet = if ($LegacySixStatuses) { $script:LegacyStatuses } else { $script:DesiredStatuses }
+$list = ($statusSet | ForEach-Object { '"' + $_ + '"' }) -join ', '
 $text = [regex]::Replace($text, $generated, { param($m) 'statuses: [' + $list + ']' + $(if ($m.Value.EndsWith("`r")) { "`r" } else { '' }) })
 [IO.File]::WriteAllText($configPath, $text, (New-Object Text.UTF8Encoding($false)))
 Write-Host "Initialized: $root"
-Write-Host "Statuses: $($script:DesiredStatuses -join ', ')"
+Write-Host "Statuses: $($statusSet -join ', ')"

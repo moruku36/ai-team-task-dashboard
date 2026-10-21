@@ -3,6 +3,10 @@ import {lstatSync, readFileSync} from 'node:fs';
 const providers = new Set(['codex', 'claude', 'antigravity', 'mimo']);
 const states = new Set(['available', 'partial', 'fetch_failed', 'stale', 'missing', 'not_reported', 'unconfirmed']);
 const ISO_CURRENCIES = new Set(['USD', 'EUR', 'JPY', 'GBP', 'CNY', 'CHF', 'CAD', 'AUD', 'HKD', 'SGD', 'KRW', 'INR', 'BRL', 'TWD', 'SEK', 'NOK', 'NZD', 'MXN', 'ZAR', 'RUB']);
+// Where a MiMo balance figure came from. Only a figure read from the official source is a balance; a usage-based
+// estimate is never promoted to one (it is dropped here, not shown as a smaller-confidence balance).
+const balanceSources = new Set(['official_api', 'console_manual', 'mock', 'unconfirmed']);
+const officialDocsUrl = 'https://mimo.mi.com/docs/en-US/news/previous-news/recharge';
 const errors = new Set(['rate_limited', 'executable_not_found', 'timeout', 'parse_error', 'version_mismatch', 'authentication_required', 'permission_denied']);
 const date = value => {
   if (typeof value !== 'string') return null;
@@ -34,6 +38,8 @@ export function sanitizeUsage(input, now = Date.now()) {
     const collected = date(card.collected_at), lastSuccess = date(card.last_success_collected_at);
     const staleSeconds = typeof card.stale_after_seconds === 'number' && card.stale_after_seconds > 0 ? Math.min(card.stale_after_seconds, 3600) : 3600;
     if (provider === 'mimo') {
+      const estimated = card.balance_source === 'estimate_from_usage';
+      const balanceSource = estimated ? 'estimate_rejected' : balanceSources.has(card.balance_source) ? card.balance_source : 'unconfirmed';
       const sanitizeMoney = (raw, historical) => {
         if (!raw || typeof raw !== 'object') return null;
         const amount = typeof raw.amount === 'number' && Number.isFinite(raw.amount) ? raw.amount : null;
@@ -65,13 +71,15 @@ export function sanitizeUsage(input, now = Date.now()) {
       };
       const curRowMoney = Array.isArray(card.current_rows) ? card.current_rows.find(r => r?.metric_kind === 'money') : null;
       const pastRowMoney = Array.isArray(card.last_known_rows) ? card.last_known_rows.find(r => r?.metric_kind === 'money') : null;
-      const balance = sanitizeMoney(card.balance ?? curRowMoney, false);
-      const lastKnownBalance = sanitizeMoney(card.last_known_balance ?? pastRowMoney, true);
+      const balance = estimated ? null : sanitizeMoney(card.balance ?? curRowMoney, false);
+      const lastKnownBalance = estimated ? null : sanitizeMoney(card.last_known_balance ?? pastRowMoney, true);
       cards.push({
         provider: 'mimo',
         status,
         error_kind: card.error_kind === null ? null : errors.has(card.error_kind) ? card.error_kind : 'unknown',
         account_alignment: alignment,
+        balance_source: balanceSource,
+        official_docs_url: officialDocsUrl,
         collected_at: collected,
         last_success_collected_at: lastSuccess,
         balance,

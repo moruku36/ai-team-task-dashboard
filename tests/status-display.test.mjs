@@ -35,7 +35,7 @@ test('HTML gets display asset; JSON and writes keep original status, UTF-8 and b
     const payload = JSON.stringify({status:'Verifying', description:'確認'});
     assert.equal(await (await fetch(`${root}/api/tasks`, {method:'POST', body:payload})).text(), payload);
     assert.equal(received.toString('utf8'), payload);
-    assert.match(await (await fetch(`${root}/__dashboard/status-display.js`)).text(), /作業はできていて/);
+    assert.match(await (await fetch(`${root}/__dashboard/status-display.js`)).text(), /完了とは限りません/);
   } finally {await stop(proxy); await stop(fixture);}
 });
 
@@ -91,13 +91,13 @@ test('headless synthetic DOM: label, description, live rerender, select value an
   const profile = mkdtempSync(path.join(tmpdir(), 'backlog-display-test-'));
   try {
     const {stdout} = await promisify(execFile)(chrome, ['--headless','--no-first-run','--no-default-browser-check',`--user-data-dir=${profile}`,'--dump-dom','--virtual-time-budget=2000',`http://127.0.0.1:${port}`], {timeout:30000, maxBuffer:2*1024*1024});
-    assert.match(stdout, /id="column"[^>]*>最終確認<\/h3>/);
-    assert.match(stdout, /作業はできていて、動作や成果物を点検中。確認が済んだら完了へ/);
-    assert.match(stdout, /option value="Verifying"[^>]*>最終確認<\/option>/);
+    assert.match(stdout, /id="column"[^>]*>旧「最終確認」（要確認）<\/h3>/);
+    assert.match(stdout, /旧状態です。完了とは限りません/);
+    assert.match(stdout, /option value="Verifying"[^>]*>旧「最終確認」（要確認）<\/option>/);
     assert.match(stdout, /id="task-title">Verifying<\/h3>/);
     assert.match(stdout, /id="prose">Verifying<\/p>/);
     assert.match(stdout, /id="badge" class="rounded-circle">Done<\/span>/);
-    assert.match(stdout, /id="new-badge"[^>]*>最終確認<\/span>/);
+    assert.match(stdout, /id="new-badge"[^>]*>旧「最終確認」（要確認）<\/span>/);
     assert.doesNotMatch(stdout,/aria-label="ステータスの説明"/);assert.deepEqual(submission, {status:'Verifying'});
   } finally {
     await stop(proxy); await stop(fixture);

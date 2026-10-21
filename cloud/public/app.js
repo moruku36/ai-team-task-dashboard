@@ -1,12 +1,13 @@
-const states = ['To Do', 'In Progress', 'Awaiting Approval', 'Blocked', 'Verifying', 'Done'];
-const names = ['未着手', '進行中', '承認待ち', '中断・保留', '検証中', '完了'];
+const states = ['To Do', 'In Progress', 'Blocked', 'Done'];
+const names = ['To Do', 'In Progress', 'Blocked', 'Done'];
+const legacyNames = { 'Awaiting Approval': '旧「承認待ち」', 'Verifying': '旧「最終確認」' };
 const groups = ['現行', '要棚卸し', '完了履歴'];
 let snapshot = { tasks: [] }, group = '現行', online = false, selected, busy = false;
 const pendingRequests = new Map();
 const acknowledgedVersions = new Map();
 let readGeneration = 0;
 let detailGeneration = 0, selectedStale = false;
-const taskFields = ['id', 'title', 'owner', 'status', 'group', 'detail', 'lastConfirmedAt'];
+const taskFields = ['id', 'title', 'owner', 'status', 'legacyStatus', 'group', 'detail', 'lastConfirmedAt'];
 const sameTask = (a, b, metadata = true) => [...taskFields, ...(metadata ? ['version', 'updatedAt'] : [])].every(key => a[key] === b[key]);
 const validTime = value => {
   if (typeof value !== 'string') return false;
@@ -23,6 +24,7 @@ const validTask = task => task && typeof task === 'object' && !Array.isArray(tas
   typeof task.owner === 'string' && task.owner.trim() && task.owner.length <= 100 &&
   typeof task.detail === 'string' && task.detail.length <= 100000 &&
   states.includes(task.status) && groups.includes(task.group) &&
+  (task.legacyStatus === undefined || Object.hasOwn(legacyNames, task.legacyStatus)) &&
   Number.isSafeInteger(task.version) && task.version > 0 && validTime(task.updatedAt) &&
   (task.lastConfirmedAt === null || validTime(task.lastConfirmedAt));
 function validSnapshot(value) {
@@ -65,6 +67,7 @@ function render() {
     for (const task of tasks) {
       const card = node('button', '', 'card'); card.append(node('span', task.id, 'id'), node('strong', task.title),
         node('small', `主担当: ${task.owner}`), node('small', `更新: ${time(task.updatedAt)}`), node('small', `確認: ${time(task.lastConfirmedAt)}`));
+      if (task.legacyStatus) card.append(node('small', `${legacyNames[task.legacyStatus]}から表示（要確認・自動完了にはしません）`, 'quota-badge'));
       if (pendingRequests.has(task.id)) card.append(node('small', '保存結果が未確認'));
       card.onclick = () => {
         if (busy) return;
