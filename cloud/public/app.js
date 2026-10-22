@@ -30,9 +30,9 @@ const validTime = value => {
 const validTask = task => task && typeof task === 'object' && !Array.isArray(task) &&
   typeof task.id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(task.id) &&
   typeof task.title === 'string' && task.title.trim() && task.title.length <= 300 &&
-  typeof task.owner === 'string' && task.owner.trim() && task.owner.length <= 100 &&
+  typeof task.owner === 'string' && (task.owner === '' || task.owner.trim()) && task.owner.length <= 100 &&
   typeof task.detail === 'string' && task.detail.length <= 100000 &&
-  states.includes(task.status) && groups.includes(task.group) &&
+  states.includes(task.status) && (task.group === null || groups.includes(task.group)) &&
   (task.legacyStatus === undefined || Object.hasOwn(legacyNames, task.legacyStatus)) &&
   Number.isSafeInteger(task.version) && task.version > 0 && validTime(task.updatedAt) &&
   (task.lastConfirmedAt === null || validTime(task.lastConfirmedAt));
@@ -64,25 +64,25 @@ const count = n => fetched() ? n : '—';
 const time = value => value ? new Date(value).toLocaleString('ja-JP') : '未記録';
 const node = (tag, text, className) => { const n = document.createElement(tag); n.textContent = text; if (className) n.className = className; return n; };
 function render() {
-  el('groups').replaceChildren(...groups.map(g => {
-    const b = node('button', `${g} · ${count(snapshot.tasks.filter(t => t.group === g).length)}`, group === g ? 'active' : '');
+  el('groups').replaceChildren(...[...groups, null].map(g => {
+    const b = node('button', `${g ?? '未分類'} · ${count(snapshot.tasks.filter(t => t.group === g).length)}`, group === g ? 'active' : '');
     b.onclick = () => { group = g; render(); }; return b;
   }));
   const query = el('search').value.toLocaleLowerCase();
   el('board').replaceChildren(...states.map((s, i) => {
     const column = node('section', '', 'column');
-    const tasks = snapshot.tasks.filter(t => t.group === group && t.status === s && `${t.title} ${t.owner} ${t.detail}`.toLocaleLowerCase().includes(query));
+    const tasks = snapshot.tasks.filter(t => t.group === group && t.status === s && `${t.title} ${t.owner || '担当未設定'} ${t.detail}`.toLocaleLowerCase().includes(query));
     column.append(node('h2', `${names[i]} · ${count(tasks.length)}`));
     for (const task of tasks) {
       const card = node('button', '', 'card'); card.append(node('span', task.id, 'id'), node('strong', task.title),
-        node('small', `主担当: ${task.owner}`), node('small', `更新: ${time(task.updatedAt)}`), node('small', `確認: ${time(task.lastConfirmedAt)}`));
+        node('small', `主担当: ${task.owner || '未設定'}`), node('small', `更新: ${time(task.updatedAt)}`), node('small', `確認: ${time(task.lastConfirmedAt)}`));
       if (task.legacyStatus) card.append(node('small', `${legacyNames[task.legacyStatus]}から表示（要確認・自動完了にはしません）`, 'quota-badge'));
       if (pendingRequests.has(task.id)) card.append(node('small', '保存結果が未確認'));
       card.onclick = () => {
         if (busy) return;
         ++detailGeneration; selected = task; selectedStale = false; const pending = pendingRequests.get(task.id);
         el('detailTitle').textContent = task.title;
-        el('detailBody').textContent = `${task.id} / 主担当: ${task.owner}${task.legacyStatus ? ` / 保存上の旧状態: ${task.legacyStatus}（表示上は ${task.status} 列。自動では変更されません）` : ''}\n更新: ${time(task.updatedAt)} / 確認: ${time(task.lastConfirmedAt)}\n\n${task.detail}`;
+        el('detailBody').textContent = `${task.id} / 主担当: ${task.owner || '未設定'}${task.legacyStatus ? ` / 保存上の旧状態: ${task.legacyStatus}（表示上は ${task.status} 列。自動では変更されません）` : ''}\n更新: ${time(task.updatedAt)} / 確認: ${time(task.lastConfirmedAt)}\n\n${task.detail}`;
         keepOption.hidden = !task.legacyStatus;
         el('status').value = statusChoice(task, pending); el('status').disabled = Boolean(pending);
         el('saveNotice').textContent = pending ? '保存結果が未確認です。同じ要求ID・内容で再送します。' : '';
