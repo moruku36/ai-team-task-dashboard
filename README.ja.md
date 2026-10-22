@@ -19,7 +19,7 @@ AIと進める仕事の「進行中・承認待ち・中断・完了」を見渡
 
 ## 現在の運用方針 — Web版だけを正本にする
 
-Webアプリ／Neonを唯一の正本とし、ローカルMarkdownとローカルUIの更新は終了します。既存の本人Webセッション、または[Web更新手順](docs/17-web-task-operations.md)の明示承認付きVercel操作ジョブを使います。既存の接続・deploy権限とVercel内のDB設定を利用し、新しい認証資格情報は作りません。ローカル同期・常駐自動化は開始しません。
+Webアプリ／Neonを唯一の正本とし、ローカルMarkdownとローカルUIの更新は終了します。既存の本人Webセッション、または[Web更新手順](docs/17-web-task-operations.ja.md)の明示承認付きVercel操作ジョブを使います。既存の接続・deploy権限とVercel内のDB設定を利用し、新しい認証資格情報は作りません。ローカル同期・常駐自動化は開始しません。
 
 リセットサマリには、鮮度のある観測で確認できるウィンドウ別のJST日時／残り時間を表示し、未取得や古い時刻は不明／参考扱いにします。
 
@@ -86,6 +86,7 @@ node tests\integration.mjs                     # synthetic tasks in a temporary 
 ## 設計・確認資料
 
 - [クラウド設計・日本語](docs/12-cloud-architecture.ja.md)／[English](docs/12-cloud-architecture.md)：設計段階の背景資料。deploy前の状況記述は過去の記録であり、現在の完了状況は本READMEを参照。
+- [現行構成と構成図](docs/20-current-architecture.ja.md)／[資料索引](docs/README.ja.md)
 - [ローカルMVP構成](docs/09-backlog-md-architecture.ja.md)／[AI更新プロトコル](docs/10-agent-update-protocol.ja.md)。
 - 初期Kanboard資料（docs/01〜08）と[旧例](examples/task-card.md)は失効済みの参考記録で、現行構成やネイティブ形式ではありません。
 

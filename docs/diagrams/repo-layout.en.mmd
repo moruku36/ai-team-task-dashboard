@@ -1,0 +1,11 @@
+flowchart LR
+  ROOT["repository"]
+  ROOT --> CLOUD["cloud/<br/>production web app and API<br/>cloud/tests: node --test"]
+  ROOT --> API["api/index.mjs<br/>Vercel function entry"]
+  ROOT --> SCRIPTS["scripts/<br/>retired local Backlog.md tooling,<br/>display adapters, receipt verify"]
+  ROOT --> TESTS["tests/<br/>local tooling tests"]
+  ROOT --> DOCS["docs/<br/>EN: name.md, JA: name.ja.md"]
+  ROOT --> EX["examples/<br/>synthetic data only"]
+  ROOT --> VJ["vercel.json<br/>build command, rewrites, headers, CSP"]
+  CLOUD --> PUB["public/ (shipped assets)"]
+  DOCS --> DG["diagrams/*.mmd<br/>images/*.svg rendered by Pele"]

@@ -1,0 +1,19 @@
+sequenceDiagram
+  participant B as Owner browser
+  participant G as Vercel protection
+  participant S as server.mjs
+  participant A as Owner gate
+  participant D as Neon
+  B->>G: POST /api/tasks (status change, expected version)
+  G->>S: authenticated request
+  S->>A: verify owner and Origin
+  A-->>S: owner principal
+  S->>D: transaction with row lock
+  alt version matches
+    D-->>S: commit
+    S-->>B: 200 new version
+  else stale version
+    D-->>S: no change
+    S-->>B: 409 conflict
+  end
+  B->>S: refetch GET /api/tasks (every 30 s and after save)

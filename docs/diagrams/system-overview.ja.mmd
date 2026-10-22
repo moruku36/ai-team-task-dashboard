@@ -1,0 +1,21 @@
+flowchart TB
+  OWNER["本人のブラウザ"]
+  subgraph VERCEL["Vercel 本番プロジェクト"]
+    GATE["Deployment Protection<br/>All Deployments・本人のみ"]
+    STATIC["静的ファイル<br/>index.html, app.js, style.css, favicon.png"]
+    FN["api/index.mjs<br/>cloud/server.mjs"]
+    AUTH["本人ゲート<br/>cloud/auth.mjs + owner-auth.mjs<br/>Better Auth・Sign in with Vercel"]
+    MODEL["タスクモデル<br/>cloud/model.mjs<br/>4状態・版照合 CAS"]
+    QUOTA["クォータDTO<br/>quota.mjs, quota-freshness.mjs,<br/>usage-metadata.mjs"]
+    JOB["build時の操作ジョブ<br/>run-task-operator-job.mjs,<br/>task-operator.mjs"]
+  end
+  NEON[("Neon PostgreSQL<br/>唯一の正本<br/>cloud/postgres.mjs")]
+  OWNER --> GATE
+  GATE --> STATIC
+  GATE -->|"GET/POST /api/tasks, GET /api/quota, /api/auth/*"| FN
+  FN --> AUTH
+  AUTH --> MODEL
+  AUTH --> QUOTA
+  MODEL <--> NEON
+  QUOTA -->|"保存済みスナップショットを読む"| NEON
+  JOB -->|"明示承認・最大10操作"| NEON
