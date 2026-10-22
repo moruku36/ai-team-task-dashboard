@@ -5,6 +5,7 @@ export const statuses = ['To Do', 'In Progress', 'Blocked', 'Done'];
 export const legacyStatusMap = Object.freeze({ 'Awaiting Approval': 'Blocked', 'Verifying': 'In Progress' });
 export const normalizeStatus = status => Object.hasOwn(legacyStatusMap, status) ? { status: legacyStatusMap[status], legacyStatus: status } : { status };
 export const groups = ['現行', '要棚卸し', '完了履歴'];
+// Unset is explicit and narrow: owner '' (never null/blank/whitespace) and group null (never undefined or an unknown name). No placeholder person or category is invented.
 export class Problem extends Error { constructor(status, message) { super(message); this.status = status; } }
 export const emptyBoard = () => ({ revision: 0, tasks: [], receipts: {}, audit: [] });
 const string = (value, max, required = false) => {
@@ -35,14 +36,15 @@ export function publicSnapshot(board) {
   if (new Set(tasks.map(task => task.id)).size !== tasks.length || tasks.some(task => task.version > board.revision)) throw new Problem(503, 'Invalid stored board');
   return { revision: board.revision, tasks, observedAt: new Date().toISOString() };
 }
+const unsetOrText = (value, max) => value === '' ? '' : string(value, max, true);
 export function taskInput(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Problem(400, 'Invalid task');
   if (Object.keys(input).some(k => !['id', 'title', 'status', 'owner', 'group', 'detail', 'lastConfirmedAt'].includes(k))) throw new Problem(400, 'Unknown field');
   if (typeof input.id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(input.id)) throw new Problem(400, 'Invalid ID');
-  if (!statuses.includes(input.status) || !groups.includes(input.group)) throw new Problem(400, 'Invalid status/group');
+  if (!statuses.includes(input.status) || !(input.group === null || groups.includes(input.group))) throw new Problem(400, 'Invalid status/group');
   const confirmed = input.lastConfirmedAt == null ? null : canonicalTime(input.lastConfirmedAt);
   return { id: input.id, title: string(input.title, 300, true), status: input.status,
-    owner: string(input.owner, 100, true), group: input.group, detail: string(input.detail ?? '', 100000), lastConfirmedAt: confirmed };
+    owner: unsetOrText(input.owner, 100), group: input.group, detail: string(input.detail ?? '', 100000), lastConfirmedAt: confirmed };
 }
 export async function mutate(store, command, actor = 'owner') {
   if (!command || typeof command !== 'object' || Array.isArray(command) ||
