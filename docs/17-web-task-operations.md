@@ -1,5 +1,7 @@
 # Web task operations (2026-10-14)
 
+Language: **English** | [日本語](17-web-task-operations.ja.md)
+
 The Web app / Neon document is the sole canonical task store. Retired local Markdown and the local UI are not updated or synchronized. Existing state, quota snapshots and migration archives remain intact.
 
 ## Existing authority; no new permanent access

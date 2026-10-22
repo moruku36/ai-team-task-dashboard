@@ -17,7 +17,7 @@
 
 WSL2内のWebサーバーをloopback限定で設定し、Windows側のlocalhost転送で閲覧する。127.0.0.1のみを許可し、IPv6・WSLのネットワークモードも含めて外部に待受がないことを確認する。PHPの組込み開発サーバーは短い検証用に限り、継続運用の既定にしない。
 
-必要なもの：Kanboard、Webサーバー、PHPと必須拡張、SQLite、現行ブラウザ。初版はメール、Redis、SSO、Dockerを追加しない。任意機能のcronが必要になったら別途設ける。料金はOSS利用料0円、既存Windows/PCの費用・電力・保守は別。[S2–S6, S11–S12](08-sources.md)
+必要なもの：Kanboard、Webサーバー、PHPと必須拡張、SQLite、現行ブラウザ。初版はメール、Redis、SSO、Dockerを追加しない。任意機能のcronが必要になったら別途設ける。料金はOSS利用料0円、既存Windows/PCの費用・電力・保守は別。[S2–S6, S11–S12](08-sources.ja.md)
 
 完了条件：ローカル受入試験合格、架空データ10件で一覧の分かりやすさを本人が確認、バックアップから復元可能。実タスク投入は必要なものだけ手動で行う。
 
@@ -37,10 +37,10 @@ WSL2内のWebサーバーをloopback限定で設定し、Windows側のlocalhost�
 
 ### Vercel等の注意点（2026-10-11確認）
 
-- Vercel Hobbyは個人非商用向け。事業・収益活動に使う場合は適合を改めて確認する。上限到達で機能が停止する場合がある。[S13, S14](08-sources.md)
-- Vercel Functionsに永続的なローカルSQLiteを置かない。関数の一時領域をDBや常駐プロセスの保存先として扱わない。[S15, S16](08-sources.md)
-- Cloudflare Pagesは静的閲覧UIの代替候補。Freeのビルド回数などに上限があり、サービス条件の確認は別途必要。[S25](08-sources.md)
-- Supabase FreeはDB/Authを提供するが、低利用時の休止、容量等の上限、バックアップ制約がある。無料プランを維持するためだけの無意味なkeepaliveは設計しない。[S17, S18, S26](08-sources.md)
+- Vercel Hobbyは個人非商用向け。事業・収益活動に使う場合は適合を改めて確認する。上限到達で機能が停止する場合がある。[S13, S14](08-sources.ja.md)
+- Vercel Functionsに永続的なローカルSQLiteを置かない。関数の一時領域をDBや常駐プロセスの保存先として扱わない。[S15, S16](08-sources.ja.md)
+- Cloudflare Pagesは静的閲覧UIの代替候補。Freeのビルド回数などに上限があり、サービス条件の確認は別途必要。[S25](08-sources.ja.md)
+- Supabase FreeはDB/Authを提供するが、低利用時の休止、容量等の上限、バックアップ制約がある。無料プランを維持するためだけの無意味なkeepaliveは設計しない。[S17, S18, S26](08-sources.ja.md)
 - 無料枠超過時は勝手に有料化せず止めて相談する。独自ドメイン・有料SMTP・有料プランは必須にしない。必要になった費用は事前承認。
 
 ## Aの移行手順（将来の手順）
