@@ -145,7 +145,7 @@ test('existing /api/tasks wire DTO, CAS and idempotency are unchanged when quota
     assert.equal((await a.post(request)).status, 200); assert.equal((await (await a.get('/api/tasks')).json()).revision, 1); // same requestId replays without a second commit
     assert.equal((await a.post(command(0, 'Done', 'compat-stale'))).status, 409); assert.equal((await a.post(command(1, 'Done', 'compat-create'))).status, 409);
     assert.equal((await a.post(command(1, 'Done', 'compat-next'))).status, 200); assert.equal((await a.get('/api/quota')).status, 200);
-    assert.equal((await fetch(a.url + '/api/quota', { method: 'POST', headers: { Origin: env.DASHBOARD_ORIGIN, 'Content-Type': 'application/json', 'X-Dashboard-Write': '1' }, body: '{}' })).status, 404); // quota is read-only
+    assert.equal((await fetch(a.url + '/api/quota', { method: 'POST', headers: { Origin: env.DASHBOARD_ORIGIN, 'Content-Type': 'application/json', 'X-Dashboard-Write': '1' }, body: '{}' })).status, 400); // quota accepts only a valid owner-authorized usage snapshot; an empty body is rejected and stores nothing
   } finally { await a.close(); }
 });
 

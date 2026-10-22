@@ -201,6 +201,25 @@ function quotaAcquiredText(card, now = Date.now()) {
   if (!card || !['available', 'partial'].includes(card.status) || !validTime(card.collected_at) || Date.parse(card.collected_at) > now) return '取得時刻: 未確認';
   return `取得時刻: ${new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(Date.parse(card.collected_at))} JST`;
 }
+const jstSeconds = value => `${new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(Date.parse(value))} JST`;
+// Gemini 4 Argon weekly: its own window, never folded into the Gemini shared values. Missing/invalid -> unknown; stale or historical -> reference.
+function argonWindow(card, now = Date.now()) {
+  const usable = x => x && typeof x === 'object' && x.limit_id === 'gemini_4_argon_weekly' && quotaPercent(x.remaining_percent);
+  const a = card?.argon_weekly, past = card?.last_known_argon_weekly;
+  const collectedOk = Boolean(card) && validTime(card.collected_at) && Date.parse(card.collected_at) <= now;
+  const live = usable(a) && collectedOk && ['available', 'partial'].includes(card.status) && a.status === 'available' && validTime(a.fresh_until) && Date.parse(a.fresh_until) >= now &&
+    (!a.reset_at || validTime(a.reset_at) && Date.parse(a.reset_at) > now);
+  const ref = !live && usable(past) ? past : null;
+  const value = live ? a.remaining_percent : ref ? ref.remaining_percent : null;
+  const state = live ? 'current' : ref ? 'reference' : 'unknown';
+  const acquired = live ? card.collected_at : ref ? card?.last_success_collected_at : null;
+  const window = node('span', `Argon Weekly ${value === null ? '不明' : `${Number(value.toFixed(1))}%`}${ref ? ' 参考' : ''}`, 'quota-window argon ' + state);
+  window.setAttribute?.('data-limit', 'gemini_4_argon_weekly');
+  const source = live ? a : ref;
+  window.append(node('small', source?.reset_at ? quotaResetText(card, { ...source, period: 'weekly' }, Boolean(ref)) : source?.reset_approximate ? 'リセット: 概算のみ(確定時刻なし)' : 'リセット: 未取得', 'quota-reset'),
+    node('small', validTime(acquired) ? `${live ? '取得' : '参考(前回成功)'}: ${jstSeconds(acquired)}` : '取得: 未確認', 'quota-observed'));
+  return { window, state };
+}
 function renderQuota(quota) {
   const restoreFocus = Boolean(quotaSummary && document.activeElement === quotaSummary);
   quotaDetailsOpen = quotaDisclosure?.open ?? quotaDetailsOpen;
@@ -226,13 +245,18 @@ function renderQuota(quota) {
         const value = valid ? row.remaining_percent : reference ? reference.remaining_percent : null;
         const state = valid ? 'current' : reference ? 'reference' : row?.status === 'not_reported' ? 'unknown' : row && (row.stale || row.reset_passed || Date.parse(row.fresh_until) < Date.now() || Date.parse(row.reset_at) <= Date.now()) ? 'stale' : 'unknown';
         states.push(state);
-        const window = node('span', `${period === 'five_hour' ? '5h' : 'Weekly'} ${value === null ? '?' : `${Number(value.toFixed(1))}%`}${reference ? ' reference' : ''}${provider === 'codex' && !valid ? ' (未更新)' : ''}`, 'quota-window ' + state);
+        const window = node('span', `${period === 'five_hour' ? '5h' : 'Weekly'} ${value === null ? (row?.status === 'disabled' ? '無効' : '?') : `${Number(value.toFixed(1))}%`}${reference ? ' reference' : ''}${provider === 'codex' && !valid ? ' (未更新)' : ''}`, 'quota-window ' + state);
         const shown = valid ? row : reference ?? (provider === 'codex' ? null : row);
         window.append(node('small', quotaResetText(card, shown, Boolean(reference)), 'quota-reset'),
           node('small', quotaObservedText(card, shown, Boolean(reference), provider), 'quota-observed'));
         rates.append(window);
       }
       item.append(rates);
+      if (pool === 'gemini_shared') {
+        const argon = argonWindow(card), argonRates = node('div', '', 'quota-rates');
+        argonRates.append(argon.window); states.push(argon.state);
+        item.append(node('strong', 'Gemini 4 Argon（共有枠とは別）'), argonRates);
+      }
       if (states.some(state => state !== 'current')) item.append(node('small', [...new Set(states.filter(state => state !== 'current'))].join(' / '), 'quota-badge'));
     }
     grid.append(item);
@@ -260,7 +284,8 @@ function renderQuotaDetails(quota, target) {
   if (quota.usage) {
     const items = quota.usage.cards.map(card => {
       const item = node('div', '', 'quota-item reference');
-      item.append(node('h3', `${card.provider === 'antigravity' ? 'AG' : quotaProviders[card.provider]} ・ 保存済み取得値`), node('small', `収集: ${time(card.collected_at)} ・ 最終成功: ${time(card.last_success_collected_at)}`));
+      item.append(node('h3', `${card.provider === 'antigravity' ? 'AG' : quotaProviders[card.provider]} ・ 保存済み取得値`), node('small', `収集: ${time(card.collected_at)} ・ 最終成功: ${time(card.last_success_collected_at)}`),
+        node('small', `アカウント照合: ${card.account_alignment === 'verified' ? '確認済み' : card.account_alignment === 'mismatch' ? '不一致(値を表示しません)' : '未確認'}`));
       for (const [rows, historical] of [[card.current_rows, false], [card.last_known_rows, true]]) for (const row of rows) {
         const current = !historical && currentQuotaRow(card, row);
         const used = typeof row.used_percent === 'number' && Number.isFinite(row.used_percent) && row.used_percent >= 0 && row.used_percent <= 100 ? `${row.used_percent}%` : '不明';
@@ -350,8 +375,58 @@ async function refreshAuth() {
     else if (failure?.emailNotFound) parts.push(node('span', `Vercelからメール情報を取得できず、サインインは未完了です。Appのscope設定の確認が必要です。ログイン・オーナー確認は成立していません。${failure.label ? `相関ID: ${failure.label}` : '(相関IDなし)'}`));
     else if (failure) parts.push(node('span', 'サインインは完了しませんでした(エラー)。ログインは成立していません。'));
     el('auth').replaceChildren(...parts);
+    if (el('quotaImport')) el('quotaImport').hidden = state !== 'owner';
+    if (el('planImport')) el('planImport').hidden = state !== 'owner';
   } catch { el('auth').replaceChildren(node('span', '認証が利用できません')); }
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { refresh(); refreshQuota(); } });
+// Owner-only manual upload of the local display file. The server keeps only allowlisted fields and refuses an older snapshot; this code never reads secrets or logs.
+async function sendUsage() {
+  const file = el('quotaFile').files?.[0], notice = el('quotaImportNotice');
+  if (!file) { notice.textContent = 'ファイルを選んでください。'; return; }
+  if (file.size > 100000) { notice.textContent = 'ファイルが大きすぎます(100KB以下)。'; return; }
+  try {
+    const usage = JSON.parse(await file.text());
+    const response = await fetch('/api/quota', { method: 'POST', credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(15000), headers: { 'Content-Type': 'application/json', 'X-Dashboard-Write': '1' }, body: JSON.stringify({ requestId: crypto.randomUUID(), usage }) });
+    const result = await response.json().catch(() => ({}));
+    notice.textContent = response.ok ? `取り込みました(受信 ${time(result.receivedAt)}・収集時刻はファイルの値のままです)` : response.status === 409 ? `取り込みを中止しました: ${result.error ?? '保存済みの方が新しい、または競合'}` : `取り込めませんでした(HTTP ${response.status})`;
+    if (response.ok) await refreshQuota();
+  } catch { notice.textContent = 'ファイルを読めない、または送信に失敗しました。保存済みの値は変わっていません。'; }
+}
+if (el('quotaSend')) el('quotaSend').onclick = sendUsage;
+// Owner-only one-time apply of a ticket sync plan (made by scripts/ticket-sync-plan.mjs). Each operation is one ordinary POST /api/tasks with its own fixed requestId and
+// expectedVersion, so a repeat is deduplicated and a changed card (409) stops the run. Nothing is rolled back automatically; the notice lists what was applied.
+const planStatuses = ['To Do', 'In Progress', 'Blocked', 'Done'];
+const validPlanOperation = op => op && typeof op === 'object' && ['create', 'status'].includes(op.kind) && typeof op.requestId === 'string' && /^[A-Za-z0-9_-]{8,100}$/.test(op.requestId) &&
+  Number.isSafeInteger(op.expectedVersion) && op.expectedVersion >= 0 && (op.kind === 'create') === (op.expectedVersion === 0) && op.task && typeof op.task === 'object' && op.task.id === op.id &&
+  typeof op.task.id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(op.task.id) && typeof op.task.title === 'string' && op.task.title.trim() && op.task.title.length <= 300 &&
+  planStatuses.includes(op.task.status) && typeof op.task.owner === 'string' && op.task.owner.length <= 100 && (op.task.group === null || groups.includes(op.task.group)) &&
+  typeof op.task.detail === 'string' && op.task.detail.length <= 100000 && (op.task.lastConfirmedAt === null || validTime(op.task.lastConfirmedAt));
+async function applyPlan() {
+  const notice = el('planNotice'), file = el('planFile').files?.[0];
+  if (!file) { notice.textContent = 'プランファイルを選んでください。'; return; }
+  if (file.size > 3000000) { notice.textContent = 'ファイルが大きすぎます。'; return; }
+  let plan;
+  try { plan = JSON.parse(await file.text()); } catch { notice.textContent = 'ファイルを読めません。何も送っていません。'; return; }
+  const operations = plan?.operations;
+  if (!Array.isArray(operations) || !operations.length || operations.length > 30 || !operations.every(validPlanOperation) || new Set(operations.map(op => op.id)).size !== operations.length || !validTime(plan.generatedAt)) { notice.textContent = 'プランの形式が不正です。何も送っていません。'; return; }
+  const age = Date.now() - Date.parse(plan.generatedAt);
+  if (age > 30 * 60000 || age < -60000) { notice.textContent = 'プランが古い(30分超)か時刻が不正です。作り直してください。何も送っていません。'; return; }
+  const created = operations.filter(op => op.kind === 'create').length;
+  if (!globalThis.confirm?.(`${operations.length}件を順に適用します(作成 ${created}・状態更新 ${operations.length - created})。競合した時点で中止し、巻き戻しはしません。`)) { notice.textContent = '中止しました。何も送っていません。'; return; }
+  const applied = []; busy = true;
+  try {
+    for (const op of operations) {
+      const task = { id: op.task.id, title: op.task.title, status: op.task.status, owner: op.task.owner, group: op.task.group, detail: op.task.detail, lastConfirmedAt: op.task.lastConfirmedAt };
+      let response;
+      try { response = await fetch('/api/tasks', { method: 'POST', credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(15000), headers: { 'Content-Type': 'application/json', 'X-Dashboard-Write': '1' }, body: JSON.stringify({ requestId: op.requestId, expectedVersion: op.expectedVersion, task }) }); }
+      catch { notice.textContent = `${op.id}の結果が未確認です。適用済み: ${applied.join(', ') || 'なし'}。同じファイルでもう一度適用すると、同じ要求IDで重複なく再送されます。`; return; }
+      if (!response.ok) { notice.textContent = `${op.id}で中止しました(HTTP ${response.status}${response.status === 409 ? '・競合: カードが変更されています' : ''})。適用済み: ${applied.join(', ') || 'なし'}。残りは送っていません。自動では戻しません。`; return; }
+      applied.push(op.id);
+    }
+    notice.textContent = `${applied.length}件を適用しました: ${applied.join(', ')}`;
+  } finally { busy = false; await refresh(); }
+}
+if (el('planSend')) el('planSend').onclick = applyPlan;
 el('times').textContent = '未取得'; render(); refresh(); setInterval(refresh, 30000); setInterval(refreshQuota, 30000);
 if (typeof setTimeout === 'function') { setTimeout(refreshQuota, 0); setTimeout(refreshAuth, 0); }

@@ -2,7 +2,10 @@
 // Raw records come from the owner-authorized store; only allowlisted fields leave this module.
 // Never invents per-model quotas: one provider-level entry per provider/source.
 import { evaluateQuotaFreshness, parseIsoTimestamp } from './quota-freshness.mjs';
+import { createHash } from 'node:crypto';
 import { sanitizeUsage } from './usage-metadata.mjs';
+import { projectUsage, collectionTimes } from './usage-project.mjs';
+import { Problem } from './model.mjs';
 export const PROVIDERS = Object.freeze(['codex', 'claude', 'ag']);
 // codex/claude: native observed_at is required. ag: statusline needs observed_at; the CLI source may fall back to collection time.
 const SOURCES = Object.freeze({ codex: ['native'], claude: ['native'], ag: ['statusline', 'cli'] });
@@ -79,4 +82,33 @@ export async function publicQuota(quotaStore, now = new Date()) {
   }
   const entries = [...groups.values()].slice(0, 6).map(({ entry, count }) => count === 1 ? entry : ambiguousEntry(entry.provider, entry.source));
   return { servedAt, entries, ...(stored.usageSnapshot ? { usage: sanitizeUsage(stored.usageSnapshot, now.getTime()) } : {}) };
+}
+// Owner-only replacement of the saved display snapshot. The caller sends the local display file; only allowlisted fields are kept (projectUsage).
+// Freshness is never decided here: collected_at/observed_at are stored as the collector reported them and evaluated at read time.
+// A snapshot older than what is stored for a provider is refused (409), so a late or replayed upload cannot roll the display back.
+// receivedAt is the server's receipt time and is stored apart from every collection/observation field.
+export async function updateUsageSnapshot(store, command, now = new Date()) {
+  if (!command || typeof command !== 'object' || Array.isArray(command) || Object.keys(command).some(key => !['requestId', 'usage'].includes(key)) ||
+      typeof command.requestId !== 'string' || !/^[A-Za-z0-9_-]{8,100}$/.test(command.requestId) || ['__proto__', 'constructor', 'prototype'].includes(command.requestId)) throw new Problem(400, 'Request ID and usage required');
+  let usage; try { usage = projectUsage(command.usage); } catch { throw new Problem(400, 'Invalid usage snapshot'); }
+  if (!usage.cards.length) throw new Problem(400, 'Invalid usage snapshot');
+  const fingerprint = createHash('sha256').update(JSON.stringify(usage)).digest('hex');
+  return store.transaction(board => {
+    const quota = board.quota && typeof board.quota === 'object' && !Array.isArray(board.quota) ? board.quota : { records: [] };
+    const prior = quota.usageUpdate;
+    if (prior?.requestId === command.requestId) {
+      if (prior.fingerprint !== fingerprint) throw new Problem(409, 'Request ID already used with another snapshot');
+      return { ok: true, duplicate: true, receivedAt: prior.receivedAt, providers: prior.providers };
+    }
+    const before = collectionTimes(quota.usageSnapshot), after = collectionTimes(usage);
+    for (const [provider, next] of Object.entries(after)) {
+      if (!Number.isFinite(next) && Number.isFinite(before[provider])) throw new Problem(409, 'Snapshot has no collection time for a stored provider');
+      if (Number.isFinite(next) && Number.isFinite(before[provider]) && next < before[provider]) throw new Problem(409, 'Snapshot is older than the stored one');
+    }
+    const kept = (quota.usageSnapshot?.cards ?? []).filter(card => !Object.hasOwn(after, card.provider));
+    const providers = usage.cards.map(card => ({ provider: card.provider, collectedAt: Number.isFinite(after[card.provider]) ? new Date(after[card.provider]).toISOString() : null }));
+    board.quota = { ...quota, records: Array.isArray(quota.records) ? quota.records : [], usageSnapshot: { ...usage, cards: [...usage.cards, ...kept] },
+      usageUpdate: { requestId: command.requestId, fingerprint, receivedAt: now.toISOString(), providers } };
+    return { ok: true, duplicate: false, receivedAt: now.toISOString(), providers };
+  });
 }

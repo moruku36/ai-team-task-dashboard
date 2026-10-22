@@ -6,7 +6,7 @@ import { connectStore } from './postgres.mjs';
 import { SyntheticStore } from './synthetic.mjs';
 import { authorizeOwner } from './auth.mjs';
 import { createOwnerAuth } from './owner-auth.mjs';
-import { publicQuota } from './quota.mjs';
+import { publicQuota, updateUsageSnapshot } from './quota.mjs';
 const assets = new Map([['/', ['index.html', 'text/html; charset=utf-8']], ['/app.js', ['app.js', 'text/javascript; charset=utf-8']], ['/style.css', ['style.css', 'text/css; charset=utf-8']], ['/favicon.png', ['favicon.png', 'image/png']]]);
 const securityHeaders = res => {
   res.setHeader('Cache-Control', 'no-store');
@@ -53,18 +53,19 @@ export function handler({ store, env = process.env, authorize, quotaStore, now =
         try { return json(200, await publicQuota(quotaStore, now())); }
         catch { return json(503, { error: 'Quota unavailable' }); }
       }
-      if (req.method === 'POST' && url.pathname === '/api/tasks') {
+      if (req.method === 'POST' && (url.pathname === '/api/tasks' || url.pathname === '/api/quota')) {
         if (req.headers['x-dashboard-write'] !== '1' || typeof req.headers['content-type'] !== 'string' || req.headers['content-type'].split(';')[0] !== 'application/json') throw new Problem(403, 'Write header and JSON required');
         if (req.headers.origin !== env.DASHBOARD_ORIGIN) throw new Problem(403, 'Origin rejected');
+        const limit = url.pathname === '/api/quota' ? 100000 : 500000;
         let body = typeof req.body === 'string' ? req.body : req.body === undefined ? '' : JSON.stringify(req.body);
         if (req.body === undefined) {
           const chunks = []; let size = 0;
-          for await (const chunk of req) { const bytes = Buffer.from(chunk); size += bytes.length; if (size > 500000) throw new Problem(413, 'Body too large'); chunks.push(bytes); }
+          for await (const chunk of req) { const bytes = Buffer.from(chunk); size += bytes.length; if (size > limit) throw new Problem(413, 'Body too large'); chunks.push(bytes); }
           body = Buffer.concat(chunks).toString('utf8');
         }
-        if (Buffer.byteLength(body) > 500000) throw new Problem(413, 'Body too large');
+        if (Buffer.byteLength(body) > limit) throw new Problem(413, 'Body too large');
         let command; try { command = JSON.parse(body); } catch { throw new Problem(400, 'Invalid JSON'); }
-        return json(200, await mutate(store, command, 'owner'));
+        return json(200, url.pathname === '/api/quota' ? await updateUsageSnapshot(store, command, now()) : await mutate(store, command, 'owner'));
       }
       return json(404, { error: 'Not found' });
     } catch (error) { return json(error instanceof Problem ? error.status : 503, { error: error instanceof Problem ? error.message : 'Storage unavailable; refresh or retry the same request ID' }); }
