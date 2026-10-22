@@ -12,3 +12,5 @@ main{padding:12px 18px}.toolbar{gap:10px;margin:10px 0}.toolbar label{gap:8px;fo
 /* Keep collection provenance visible without expanding quota details. */
 .quota-summary-note { grid-column: 1 / -1; margin: 0; font-size: .8rem; color: var(--muted, #64748b); }
 .quota-observed { display: block; margin-top: .2rem; font-size: .7rem; }
+
+.quota-window.argon{margin-top:2px}#quotaImport,#planImport{margin:0 0 12px;font-size:.85rem}#quotaImport summary,#planImport summary{cursor:pointer}#quotaImport[hidden],#planImport[hidden]{display:none}
