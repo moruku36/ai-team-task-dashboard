@@ -1,12 +1,22 @@
-const states = ['To Do', 'In Progress', 'Awaiting Approval', 'Blocked', 'Verifying', 'Done'];
-const names = ['未着手', '進行中', '承認待ち', '中断・保留', '検証中', '完了'];
+const states = ['To Do', 'In Progress', 'Blocked', 'Done'];
+const names = ['To Do', 'In Progress', 'Blocked', 'Done'];
+const legacyNames = { 'Awaiting Approval': '旧「承認待ち」', 'Verifying': '旧「最終確認」' };
+// Legacy-status cards are only displayed as their mapped status. The detail dialog defaults to "keep as is": saving without
+// choosing a status never persists the display mapping; choosing any of the four statuses is an explicit change.
+const KEEP = 'keep-legacy';
+const keepOption = (() => { const option = document.createElement('option'); option.textContent = '旧状態のまま（変更しない）'; option.value = KEEP; option.hidden = true; return option; })();
+const statusChoice = (task, request) => request ? (request.statusChange === 'explicit' || !task.legacyStatus ? request.task.status : KEEP) : (task.legacyStatus ? KEEP : task.status);
+const acknowledges = (saved, request, legacyAtRequest) => taskFields.filter(key => key !== 'legacyStatus').every(key => saved[key] === request.task[key]) &&
+  (request.statusChange === 'explicit' || !legacyAtRequest ? saved.legacyStatus === undefined : saved.legacyStatus === legacyAtRequest);
 const groups = ['現行', '要棚卸し', '完了履歴'];
 let snapshot = { tasks: [] }, group = '現行', online = false, selected, busy = false;
 const pendingRequests = new Map();
+// The stored legacy status the card had when its save request was created: kept per request, because the dialog (and `selected`) may be closed before the response arrives.
+const pendingLegacy = new Map();
 const acknowledgedVersions = new Map();
 let readGeneration = 0;
 let detailGeneration = 0, selectedStale = false;
-const taskFields = ['id', 'title', 'owner', 'status', 'group', 'detail', 'lastConfirmedAt'];
+const taskFields = ['id', 'title', 'owner', 'status', 'legacyStatus', 'group', 'detail', 'lastConfirmedAt'];
 const sameTask = (a, b, metadata = true) => [...taskFields, ...(metadata ? ['version', 'updatedAt'] : [])].every(key => a[key] === b[key]);
 const validTime = value => {
   if (typeof value !== 'string') return false;
@@ -23,6 +33,7 @@ const validTask = task => task && typeof task === 'object' && !Array.isArray(tas
   typeof task.owner === 'string' && task.owner.trim() && task.owner.length <= 100 &&
   typeof task.detail === 'string' && task.detail.length <= 100000 &&
   states.includes(task.status) && groups.includes(task.group) &&
+  (task.legacyStatus === undefined || Object.hasOwn(legacyNames, task.legacyStatus)) &&
   Number.isSafeInteger(task.version) && task.version > 0 && validTime(task.updatedAt) &&
   (task.lastConfirmedAt === null || validTime(task.lastConfirmedAt));
 function validSnapshot(value) {
@@ -65,13 +76,15 @@ function render() {
     for (const task of tasks) {
       const card = node('button', '', 'card'); card.append(node('span', task.id, 'id'), node('strong', task.title),
         node('small', `主担当: ${task.owner}`), node('small', `更新: ${time(task.updatedAt)}`), node('small', `確認: ${time(task.lastConfirmedAt)}`));
+      if (task.legacyStatus) card.append(node('small', `${legacyNames[task.legacyStatus]}から表示（要確認・自動完了にはしません）`, 'quota-badge'));
       if (pendingRequests.has(task.id)) card.append(node('small', '保存結果が未確認'));
       card.onclick = () => {
         if (busy) return;
         ++detailGeneration; selected = task; selectedStale = false; const pending = pendingRequests.get(task.id);
         el('detailTitle').textContent = task.title;
-        el('detailBody').textContent = `${task.id} / 主担当: ${task.owner}\n更新: ${time(task.updatedAt)} / 確認: ${time(task.lastConfirmedAt)}\n\n${task.detail}`;
-        el('status').value = pending?.task.status ?? task.status; el('status').disabled = Boolean(pending);
+        el('detailBody').textContent = `${task.id} / 主担当: ${task.owner}${task.legacyStatus ? ` / 保存上の旧状態: ${task.legacyStatus}（表示上は ${task.status} 列。自動では変更されません）` : ''}\n更新: ${time(task.updatedAt)} / 確認: ${time(task.lastConfirmedAt)}\n\n${task.detail}`;
+        keepOption.hidden = !task.legacyStatus;
+        el('status').value = statusChoice(task, pending); el('status').disabled = Boolean(pending);
         el('saveNotice').textContent = pending ? '保存結果が未確認です。同じ要求ID・内容で再送します。' : '';
         el('save').disabled = !online; el('detail').showModal();
       }; column.append(card);
@@ -105,29 +118,32 @@ async function refresh() {
   el('save').disabled = busy || !online || !selected || selectedStale;
 }
 el('detail').onclose = () => { ++detailGeneration; selected = undefined; selectedStale = false; el('save').disabled = true; };
-el('status').append(...states.map((s, i) => { const option = node('option', names[i]); option.value = s; return option; }));
+el('status').append(keepOption, ...states.map((s, i) => { const option = node('option', names[i]); option.value = s; return option; }));
 el('search').oninput = render; el('refresh').onclick = refresh;
-el('status').onchange = () => { const pending = selected && pendingRequests.get(selected.id); if (pending) el('status').value = pending.task.status; };
+el('status').onchange = () => { const pending = selected && pendingRequests.get(selected.id); if (pending) el('status').value = statusChoice(selected, pending); };
 el('save').onclick = async () => {
   if (!selected || selectedStale || busy || !online) return;
   const generation = detailGeneration;
   const taskId = selected.id;
+  const choice = el('status').value, keep = choice === KEEP;
   const request = pendingRequests.get(taskId) ?? { requestId: crypto.randomUUID(), expectedVersion: selected.version,
     task: { id: selected.id, title: selected.title, owner: selected.owner, group: selected.group, detail: selected.detail,
-      lastConfirmedAt: selected.lastConfirmedAt, status: el('status').value } };
+      lastConfirmedAt: selected.lastConfirmedAt, status: keep ? selected.status : choice },
+    ...(selected.legacyStatus && !keep ? { statusChange: 'explicit' } : {}) };
   pendingRequests.set(taskId, request);
+  if (!pendingLegacy.has(taskId)) pendingLegacy.set(taskId, selected.legacyStatus ?? null);
   ++readGeneration; // Reads started before this write cannot acknowledge a newer state.
   busy = true; el('save').disabled = true; el('status').disabled = true;
   try {
     const response = await fetch('/api/tasks', { method: 'POST', credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(15000), headers: { 'Content-Type': 'application/json', 'X-Dashboard-Write': '1' }, body: JSON.stringify(request) });
     if (response.status === 409) {
-      pendingRequests.delete(taskId);
+      pendingRequests.delete(taskId); pendingLegacy.delete(taskId);
       if (generation === detailGeneration) { el('saveNotice').textContent = '別の更新がありました。詳細を閉じて、最新のカードを開き直してください。'; selected = undefined; }
     }
     else {
       if (!response.ok) throw new Error(); const saved = await response.json();
-      if (!validTask(saved) || !sameTask(saved, request.task, false) || saved.version !== request.expectedVersion + 1) throw new Error('Unconfirmed acknowledgement');
-      pendingRequests.delete(taskId);
+      if (!validTask(saved) || !acknowledges(saved, request, pendingLegacy.get(taskId)) || saved.version !== request.expectedVersion + 1) throw new Error('Unconfirmed acknowledgement');
+      pendingRequests.delete(taskId); pendingLegacy.delete(taskId);
       acknowledgedVersions.set(taskId, Math.max(acknowledgedVersions.get(taskId) ?? 0, saved.version));
       if (generation === detailGeneration) { selected = saved; el('status').disabled = false; el('saveNotice').textContent = '保存しました'; }
     }
@@ -180,6 +196,11 @@ function quotaObservedText(card, row, historical, provider) {
   const stamp = new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(Date.parse(value));
   return `${validTime(observed) ? '観測' : '収集'}: ${stamp} JST${historical ? '・参考値' : ''}`;
 }
+// Card-level acquisition time: only the card's own collected_at, only when the collection succeeded and it is not in the future. last_success is never promoted here.
+function quotaAcquiredText(card, now = Date.now()) {
+  if (!card || !['available', 'partial'].includes(card.status) || !validTime(card.collected_at) || Date.parse(card.collected_at) > now) return '取得時刻: 未確認';
+  return `取得時刻: ${new Intl.DateTimeFormat('ja-JP', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(Date.parse(card.collected_at))} JST`;
+}
 function renderQuota(quota) {
   const restoreFocus = Boolean(quotaSummary && document.activeElement === quotaSummary);
   quotaDetailsOpen = quotaDisclosure?.open ?? quotaDetailsOpen;
@@ -189,22 +210,24 @@ function renderQuota(quota) {
     const cards = quota.usage?.cards.filter(card => card.provider === provider) ?? [];
     const card = cards.length === 1 ? cards[0] : null;
     const item = node('section', '', `quota-summary-card provider-${provider}`);
-    item.append(node('h3', provider === 'antigravity' ? 'Antigravity' : quotaProviders[provider]), node('small', provider === 'antigravity' ? 'Remaining · Antigravity内の共有枠' : 'Remaining · 本人の契約枠'));
+    item.append(node('h3', provider === 'antigravity' ? 'Antigravity' : quotaProviders[provider]), node('small', provider === 'antigravity' ? 'Remaining · Antigravity内の共有枠' : 'Remaining · 本人の契約枠'),
+      node('small', quotaAcquiredText(card), 'quota-acquired'));
     for (const pool of provider === 'antigravity' ? ['gemini_shared', 'claude_gpt_shared'] : [null]) {
       if (pool) item.append(node('strong', pool === 'gemini_shared' ? 'Gemini shared' : 'Claude / GPT shared'));
       const rates = node('div', '', 'quota-rates');
       const states = [];
-      for (const period of ['five_hour', 'weekly']) {
+      // Codex: this account's collector reports no five-hour window, so only the weekly slot is shown. Its main figure needs a fresh row with its own original observation time; saved references stay in the details.
+      for (const period of provider === 'codex' ? ['weekly'] : ['five_hour', 'weekly']) {
         const matches = card?.current_rows.filter(row => row.period === period && (row.shared_pool ?? null) === pool) ?? [];
         const row = matches.length === 1 ? matches[0] : null;
-        const valid = row && currentQuotaRow(card, row);
+        const valid = row && currentQuotaRow(card, row) && (provider !== 'codex' || validTime(row.observed_at));
         const past = card?.last_known_rows.filter(row => row.period === period && (row.shared_pool ?? null) === pool) ?? [];
-        const reference = !valid && past.length === 1 && quotaPercent(past[0].remaining_percent) ? past[0] : null;
+        const reference = provider !== 'codex' && !valid && past.length === 1 && quotaPercent(past[0].remaining_percent) ? past[0] : null;
         const value = valid ? row.remaining_percent : reference ? reference.remaining_percent : null;
         const state = valid ? 'current' : reference ? 'reference' : row?.status === 'not_reported' ? 'unknown' : row && (row.stale || row.reset_passed || Date.parse(row.fresh_until) < Date.now() || Date.parse(row.reset_at) <= Date.now()) ? 'stale' : 'unknown';
         states.push(state);
-        const window = node('span', `${period === 'five_hour' ? '5h' : 'Weekly'} ${value === null ? '?' : `${Number(value.toFixed(1))}%`}${reference ? ' reference' : ''}`, 'quota-window ' + state);
-        const shown = valid ? row : reference ?? row;
+        const window = node('span', `${period === 'five_hour' ? '5h' : 'Weekly'} ${value === null ? '?' : `${Number(value.toFixed(1))}%`}${reference ? ' reference' : ''}${provider === 'codex' && !valid ? ' (未更新)' : ''}`, 'quota-window ' + state);
+        const shown = valid ? row : reference ?? (provider === 'codex' ? null : row);
         window.append(node('small', quotaResetText(card, shown, Boolean(reference)), 'quota-reset'),
           node('small', quotaObservedText(card, shown, Boolean(reference), provider), 'quota-observed'));
         rates.append(window);

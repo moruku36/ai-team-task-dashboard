@@ -25,7 +25,7 @@ Reset summaries now show per-window JST dates/countdowns when observations are f
 
 ## Foundation: Backlog.md
 
-The adopted OSS is **[Backlog.md](https://github.com/MrLesk/Backlog.md/tree/v1.53.0), by MrLesk**, pinned to v1.53.0 (MIT). Its official Windows executable supports Markdown tasks, a CLI, MCP, a terminal Kanban board, a local web board, search, assignees, labels, priorities, milestones, dependencies and acceptance/DoD checklists. Git is optional through no-git mode. See the [selection record](docs/oss-reselection-20261011.ja.md).
+The adopted OSS is **[Backlog.md](https://github.com/MrLesk/Backlog.md/tree/v1.53.0), by MrLesk**, pinned to v1.53.0 (MIT). Its official Windows executable supports Markdown tasks, a CLI, MCP, a terminal Kanban board, a local web board, search, assignees, labels, priorities, milestones, dependencies and acceptance/DoD checklists. Git is optional through no-git mode. See the [selection record](docs/oss-reselection-20261011.ja.md) (Japanese).
 
 The local installation uses the official CLI/MCP and web UI over a shared no-git data root outside this repository. File watch → WebSocket → UI provides local updates. The cloud version is this repository's own UI/API with Neon as its canonical store; it does not host Backlog.md or inherit every OSS feature. There is **no automatic synchronization with the old CLI/MCP data root**. Existing local scripts operate on the local store.
 
@@ -81,13 +81,14 @@ The initial private import was a one-time migration. No scheduled local-to-Neon 
 node tests\integration.mjs                     # synthetic tasks in a temporary root
 ```
 
-The data root must be outside the code repository and any Git workspace; scripts refuse an unsafe location and preserve existing configuration. The official v1.53.0 local UI requires an explicit page reload after disconnect/server restart to restore ongoing updates; upstream binaries/UI are unmodified. See [validation and reconnect limits](docs/11-validation-20261011.ja.md).
+The data root must be outside the code repository and any Git workspace; scripts refuse an unsafe location and preserve existing configuration. The official v1.53.0 local UI requires an explicit page reload after disconnect/server restart to restore ongoing updates; upstream binaries/UI are unmodified. See [validation and reconnect limits](docs/11-validation-20261011.ja.md) (Japanese).
 
 ## Design and references
 
 - [Cloud architecture — English](docs/12-cloud-architecture.md) / [日本語](docs/12-cloud-architecture.ja.md): design-stage background; its pre-deployment status notes are historical. The completion status above is current.
-- [Local MVP architecture](docs/09-backlog-md-architecture.ja.md) / [AI update protocol](docs/10-agent-update-protocol.ja.md).
-- Earlier Kanboard documents (docs/01–08) and [old examples](examples/task-card.md) are superseded historical material, not the current architecture or native data format.
+- [Current architecture and diagrams](docs/20-current-architecture.md) / [Documentation index](docs/README.md)
+- [Local MVP architecture](docs/09-backlog-md-architecture.ja.md) / [AI update protocol](docs/10-agent-update-protocol.ja.md) (Japanese only).
+- Earlier Kanboard documents (docs/01–08, Japanese only) and [old examples](examples/task-card.md) are superseded historical material, not the current architecture or native data format.
 
 Official sources checked against tag v1.53.0 on 2026-10-14 (source commit fd20f71493fb4eda44b021aa89f257956f17fb71):
 

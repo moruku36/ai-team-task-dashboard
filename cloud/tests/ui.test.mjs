@@ -28,7 +28,7 @@ test('HTTP snapshot renders lifecycle, private groups, literal details and recon
       } });
     runInContext(await readFile(new URL('../public/app.js', import.meta.url), 'utf8'), context);
     const input = { id: 'UI-SYNTH', title: '<script>unsafe()</script>', owner: 'synthetic-agent', group: '現行', status: 'To Do', detail: '合成詳細', lastConfirmedAt: null };
-    for (const [i, [status, label]] of [['To Do', '未着手'], ['In Progress', '進行中'], ['Awaiting Approval', '承認待ち'], ['Done', '完了']].entries()) {
+    for (const [i, [status, label]] of [['To Do', 'To Do'], ['In Progress', 'In Progress'], ['Blocked', 'Blocked'], ['Done', 'Done']].entries()) {
       await mutate(store, { requestId: `ui-state-${i}`, expectedVersion: i, task: { ...input, status } });
       await runInContext('refresh()', context);
       const column = el('board').children.find(c => c.children[0].textContent.startsWith(label + ' ·'));
@@ -195,4 +195,26 @@ test('successful write ACK sets a floor that a post-write stale GET cannot roll 
     assert.equal(runInContext('online',context),false);assert.equal(runInContext('acknowledgedVersions.get("ACK-FLOOR")',context),2);assert.equal(el('save').disabled,true);assert.match(el('notice').textContent,/最後に取得/);
     serveOld=false;await runInContext('refresh()',context);assert.equal(runInContext('online',context),true);assert.equal(runInContext('snapshot.tasks[0].version',context),2);
   }finally{await a.close();}
+});
+
+test('legacy-status cards render inside the four columns with a legacy badge; no extra column; storage untouched', async () => {
+  const board = { ...emptyBoard(), revision: 3, tasks: ['Verifying', 'Awaiting Approval', 'Done'].map((status, i) => ({ id: `LEG-${i}`, title: `Legacy ${status}`, status, owner: 'synthetic-agent', group: '現行', detail: '合成詳細', lastConfirmedAt: null, version: i + 1, updatedAt: '2026-10-20T00:00:00.000Z' })) };
+  let writeAttempts = 0;
+  const store = { async read() { return structuredClone(board); }, async transaction() { writeAttempts++; throw new Error('read-only test'); } };
+  const a = await app(store);
+  try {
+    const elements = new Map(); const el = id => { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id); };
+    const context = createContext({ document: { hidden: false, getElementById: el, createElement: () => new Element(), addEventListener() {} },
+      crypto: { randomUUID }, AbortSignal, setInterval() {}, fetch: (path, options) => fetch(a.url + path, { ...options, headers: { ...options?.headers, Origin: 'http://synthetic.invalid' } }) });
+    runInContext(await readFile(new URL('../public/app.js', import.meta.url), 'utf8'), context);
+    await runInContext('refresh()', context);
+    const columns = el('board').children;
+    assert.equal(columns.length, 4);
+    assert.deepEqual(columns.map(c => c.children[0].textContent.split(' ·')[0]), ['To Do', 'In Progress', 'Blocked', 'Done']);
+    assert.match(text(columns[1]), /Legacy Verifying/); assert.match(text(columns[1]), /旧「最終確認」から表示/);
+    assert.match(text(columns[2]), /Legacy Awaiting Approval/); assert.match(text(columns[2]), /旧「承認待ち」から表示/);
+    assert.doesNotMatch(text(columns[3]), /Legacy Verifying|Legacy Awaiting/); assert.doesNotMatch(text(columns[3]), /旧「/);
+    assert.equal(writeAttempts, 0, 'rendering legacy cards never attempts a write');
+    assert.equal((await store.read()).tasks[0].status, 'Verifying');
+  } finally { await a.close(); }
 });

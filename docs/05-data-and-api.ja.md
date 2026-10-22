@@ -17,7 +17,7 @@
 | external_id | reference。製品内で一意制約があると仮定しない |
 | history | 製品の移動履歴＋重要変更の短いコメント |
 
-記入例は [task-card.md](../examples/task-card.md)。Kanboardにはtask/metadata APIがあるが、この設計独自の項目や厳密な競合制御が標準で備わるという意味ではない。[S7, S8, S9](08-sources.md)
+記入例は [task-card.md](../examples/task-card.md)。Kanboardにはtask/metadata APIがあるが、この設計独自の項目や厳密な競合制御が標準で備わるという意味ではない。[S7, S8, S9](08-sources.ja.md)
 
 ## 更新ルール
 

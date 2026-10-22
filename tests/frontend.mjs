@@ -271,7 +271,7 @@ async function main() {
   const created = await tryUntil(async () => (await statusOf(life)) === 'To Do', LIMIT_MS, 100);
   metrics.lifecycle = { create: { domUpdatedMs: created.value ? created.ms : null } };
   check('live: created task appears in To Do <10s', !!created.value, metrics.lifecycle.create);
-  for (const [label, status] of [['in-progress', 'In Progress'], ['awaiting-approval', 'Awaiting Approval'], ['done', 'Done']]) {
+  for (const [label, status] of [['in-progress', 'In Progress'], ['blocked', 'Blocked'], ['done', 'Done']]) {
     const r = await cliUpdateAndWatch(label, life, status);
     metrics.lifecycle[label] = r.m;
     check(`live: ${label} reflected in DOM <10s`, r.ok, r.m);
@@ -316,7 +316,7 @@ async function main() {
   const cont = {};
   const c1 = await cliUpdateAndWatch('post-restart-1', life, 'In Progress');
   cont.update1 = c1.m; cont.update1Pass = c1.ok;
-  const c2 = await cliUpdateAndWatch('post-restart-2', life, 'Awaiting Approval');
+  const c2 = await cliUpdateAndWatch('post-restart-2', life, 'Blocked');
   cont.update2 = c2.m; cont.update2Pass = c2.ok;
   const sockets = [...net_.sockets.values()];
   cont.openSocketsReceivingTasksUpdatedAfterRestart = sockets.filter((s) => s.closed === null && s.created >= tRestart && s.tasksUpdated > 0).length;
@@ -332,11 +332,11 @@ async function main() {
   // Diagnostic only (NOT UI continuity): what a manual page reload would show.
   const tNav = now();
   await cdp.send('Page.navigate', { url: `${base}/board` });
-  const reload = await tryUntil(async () => (await statusOf(life)) === 'Awaiting Approval', 20_000, 200);
+  const reload = await tryUntil(async () => (await statusOf(life)) === 'Blocked', 20_000, 200);
   metrics.diagnosticManualReload = { note: 'manual reload, not automatic UI continuity', domCorrectMs: reload.value ? Math.round(now() - tNav) : null };
   console.log(`INFO manual reload (diagnostic only, not counted): ${JSON.stringify(metrics.diagnosticManualReload)}`);
   check('explicit page reload restores current DOM snapshot', !!reload.value);
-  const afterReload = await cliUpdateAndWatch('after-explicit-page-reload', life, 'Verifying');
+  const afterReload = await cliUpdateAndWatch('after-explicit-page-reload', life, 'In Progress');
   metrics.afterExplicitPageReload = afterReload.m;
   check('explicit page reload restores subsequent live updates', afterReload.ok, afterReload.m);
 }

@@ -7,7 +7,9 @@ $script:BacklogVersion = '1.53.0'
 $script:BacklogSha256 = 'f5d4678ababa11e36866186e897a86e68e9f1f3c263d6c97034f674622abc689'
 $script:BacklogUrl = 'https://github.com/MrLesk/Backlog.md/releases/download/v1.53.0/backlog-bun-windows-x64-baseline.exe'
 $script:DefaultExe = Join-Path $script:RepoRoot '.runtime\backlog.exe'
-$script:DesiredStatuses = @('To Do', 'In Progress', 'Awaiting Approval', 'Blocked', 'Verifying', 'Done')
+$script:DesiredStatuses = @('To Do', 'In Progress', 'Blocked', 'Done')
+# Pre-four-column layout; only for compatibility tests of data roots that were created before the change.
+$script:LegacyStatuses = @('To Do', 'In Progress', 'Awaiting Approval', 'Blocked', 'Verifying', 'Done')
 
 function Get-DefaultDataRoot {
     if (-not $env:LOCALAPPDATA) { throw 'LOCALAPPDATA is not set; pass -DataRoot explicitly.' }

@@ -1,0 +1,19 @@
+sequenceDiagram
+  participant B as 本人のブラウザ
+  participant G as Vercel保護
+  participant S as server.mjs
+  participant A as 本人ゲート
+  participant D as Neon
+  B->>G: POST /api/tasks (状態変更・期待する版)
+  G->>S: 認証済みリクエスト
+  S->>A: 本人とOriginを検証
+  A-->>S: 本人
+  S->>D: 行ロック付きtransaction
+  alt 版が一致
+    D-->>S: commit
+    S-->>B: 200 新しい版
+  else 古い版
+    D-->>S: 変更なし
+    S-->>B: 409 競合
+  end
+  B->>S: 再取得 GET /api/tasks (30秒ごと・保存後)

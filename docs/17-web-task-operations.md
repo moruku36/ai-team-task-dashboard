@@ -1,5 +1,7 @@
 # Web task operations (2026-10-14)
 
+Language: **English** | [日本語](17-web-task-operations.ja.md)
+
 The Web app / Neon document is the sole canonical task store. Retired local Markdown and the local UI are not updated or synchronized. Existing state, quota snapshots and migration archives remain intact.
 
 ## Existing authority; no new permanent access
@@ -15,6 +17,8 @@ Each job packages reviewed runtime source plus one private `task-operator-reques
 3. Set `expectedVersion` to the inspected version (0 only when there is no match). Submit an `apply` job. Maximum 10 operations, with an atomic database transaction, CAS and stable unique request IDs. Existing task details are retained and an update note is appended. Other document fields remain untouched.
 4. Read the `DASHBOARD_OPERATOR_PROOF` build event: committed revision, task digests and readback success. If the outcome is uncertain, inspect before retrying. Retry the same logical operation with exactly the same request and ID; never invent a second ID to get around an uncertain response. A committed job followed by a build/alias failure is still a committed write.
 5. Restore the ordinary `node cloud/build-deployment.mjs` production deployment from the same commit, with no private request or operator modules in the deployment source. Verify READY/alias/protection. The browser refetches Neon within 30 seconds or on Refresh.
+
+Status limitation for cards stored with a legacy status (`Verifying`, `Awaiting Approval`): the job cannot make an explicit status choice. An update that keeps the displayed status leaves the stored legacy status in place, and the job result then carries `storedLegacyStatus` and `statusPersisted: false` (inspect always reports the real stored status). Choosing one of the four statuses stores it; legacy values can never be written.
 
 Use the same established project/environment as the runtime. The job checks the existing Neon project marker and configured owner before storage access; it never initializes schema or bulk imports old state. This route involves build latency and deployment operations per batch. It is a practical authorized assistant route, not an automatic background sync or a publicly callable writing endpoint.
 

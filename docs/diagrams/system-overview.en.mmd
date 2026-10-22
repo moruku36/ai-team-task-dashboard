@@ -1,0 +1,21 @@
+flowchart TB
+  OWNER["Owner browser"]
+  subgraph VERCEL["Vercel production project"]
+    GATE["Deployment Protection<br/>All Deployments, owner only"]
+    STATIC["Static assets<br/>index.html, app.js, style.css, favicon.png"]
+    FN["api/index.mjs<br/>cloud/server.mjs"]
+    AUTH["Owner gate<br/>cloud/auth.mjs + owner-auth.mjs<br/>Better Auth, Sign in with Vercel"]
+    MODEL["Task model<br/>cloud/model.mjs<br/>4 statuses, version check CAS"]
+    QUOTA["Quota DTO<br/>quota.mjs, quota-freshness.mjs,<br/>usage-metadata.mjs"]
+    JOB["Operator job at build time<br/>run-task-operator-job.mjs,<br/>task-operator.mjs"]
+  end
+  NEON[("Neon PostgreSQL<br/>sole canonical store<br/>cloud/postgres.mjs")]
+  OWNER --> GATE
+  GATE --> STATIC
+  GATE -->|"GET/POST /api/tasks, GET /api/quota, /api/auth/*"| FN
+  FN --> AUTH
+  AUTH --> MODEL
+  AUTH --> QUOTA
+  MODEL <--> NEON
+  QUOTA -->|"read saved snapshots"| NEON
+  JOB -->|"explicit, authorized, max 10 ops"| NEON

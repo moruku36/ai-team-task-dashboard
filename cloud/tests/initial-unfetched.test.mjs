@@ -20,16 +20,16 @@ test('first fetch failure: counts are unfetched (—), never 0, and no "last rec
   const ui = await load(async () => { throw new Error('offline'); });
   await ui.refresh();
   const board = text(ui.el('board')), groups = text(ui.el('groups'));
-  assert.match(groups, /現行 · —/); assert.doesNotMatch(groups + board, /· 0\b/); assert.equal((board.match(/· —/g) ?? []).length, 6);
+  assert.match(groups, /現行 · —/); assert.doesNotMatch(groups + board, /· 0\b/); assert.equal((board.match(/· —/g) ?? []).length, 4);
   assert.equal(ui.el('times').textContent, '未取得'); assert.match(ui.el('notice').textContent, /まだタスクを取得できていません/);
-  assert.doesNotMatch(ui.el('times').textContent + ui.el('notice').textContent, /最後に取得|最終取得/); assert.equal(ui.el('connection').textContent, '接続できません');
+  assert.doesNotMatch(ui.el('times').textContent + ui.el('notice').textContent, /最後に取得|最終取得|タスク一覧の同期/); assert.equal(ui.el('connection').textContent, '接続できません');
 });
 
 test('validated empty success shows true 0 and a received time; a malformed response is not an accepted snapshot', async () => {
   const ui = await load(async () => ok(snapshot([])));
   await ui.refresh();
-  assert.match(text(ui.el('groups')), /現行 · 0/); assert.equal((text(ui.el('board')).match(/· 0/g) ?? []).length, 6);
-  assert.match(ui.el('times').textContent, /最終取得/); assert.equal(ui.el('notice').textContent, ''); assert.equal(ui.el('connection').textContent, '接続中');
+  assert.match(text(ui.el('groups')), /現行 · 0/); assert.equal((text(ui.el('board')).match(/· 0/g) ?? []).length, 4);
+  assert.match(ui.el('times').textContent, /タスク一覧の同期/); assert.equal(ui.el('notice').textContent, ''); assert.equal(ui.el('connection').textContent, '接続中');
   const rejected = await load(async () => ok({ revision: 0, observedAt: new Date().toISOString() })); // missing tasks array: not an accepted snapshot
   await rejected.refresh(); assert.match(text(rejected.el('groups')), /現行 · —/); assert.equal(rejected.el('times').textContent, '未取得');
 });
@@ -40,5 +40,5 @@ test('prior accepted snapshot then failure: snapshot is preserved and marked pos
   await ui.refresh(); assert.match(text(ui.el('groups')), /現行 · 1/); assert.match(text(ui.el('board')), /合成/);
   mode = 'down'; await ui.refresh();
   assert.match(text(ui.el('groups')), /現行 · 1/); assert.match(text(ui.el('board')), /合成/); // preserved, not reset to 0 or —
-  assert.match(ui.el('times').textContent, /最終取得.*古い可能性/); assert.match(ui.el('notice').textContent, /最後に取得した状態.*古い可能性/); assert.equal(ui.el('connection').textContent, '接続できません');
+  assert.match(ui.el('times').textContent, /タスク一覧の同期.*古い可能性/); assert.match(ui.el('notice').textContent, /最後に取得した状態.*古い可能性/); assert.equal(ui.el('connection').textContent, '接続できません');
 });

@@ -1,0 +1,11 @@
+flowchart LR
+  ROOT["リポジトリ"]
+  ROOT --> CLOUD["cloud/<br/>本番Webアプリ・API<br/>cloud/tests: node --test"]
+  ROOT --> API["api/index.mjs<br/>Vercel関数の入口"]
+  ROOT --> SCRIPTS["scripts/<br/>終了済みローカルBacklog.md関連、<br/>表示アダプタ、受領確認"]
+  ROOT --> TESTS["tests/<br/>ローカル関連ツールの試験"]
+  ROOT --> DOCS["docs/<br/>英語: name.md、日本語: name.ja.md"]
+  ROOT --> EX["examples/<br/>合成データのみ"]
+  ROOT --> VJ["vercel.json<br/>build command・rewrite・header・CSP"]
+  CLOUD --> PUB["public/（配信される静的ファイル）"]
+  DOCS --> DG["diagrams/*.mmd<br/>images/*.svg（Peleで生成）"]

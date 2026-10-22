@@ -16,14 +16,14 @@ test('HTTP lifecycle, idempotency, concurrency and file-fixture restart', async 
   let a = await app(new FixtureStore(file)); t.after(() => a.close());
   assert.equal(a.server.address().address, '127.0.0.1');
   for (const path of ['/', '/app.js', '/style.css', '/api?dashboard_path=app.js']) assert.equal((await a.get(path)).status, 200);
-  for (const [i, status] of ['To Do', 'In Progress', 'Awaiting Approval', 'Done'].entries()) {
+  for (const [i, status] of ['To Do', 'In Progress', 'Blocked', 'Done'].entries()) {
     assert.equal((await a.post(command(i, status, `lifecycle-${i}`))).status, 200);
     const board = await (await a.get('/api/tasks')).json(); assert.equal(board.tasks[0].status, status); assert.equal(board.tasks[0].version, i + 1); assert.ok(board.observedAt);
   }
   assert.equal((await (await a.post(command(3, 'Done', 'lifecycle-3'))).json()).version, 4);
   assert.equal((await a.post(command(3, 'Blocked', 'lifecycle-3'))).status, 409);
   assert.equal((await a.post(command(1, 'Blocked', 'stale-request'))).status, 409);
-  const race = await Promise.all([a.post(command(4, 'Verifying', 'concurrent-a')), a.post(command(4, 'Blocked', 'concurrent-b'))]);
+  const race = await Promise.all([a.post(command(4, 'In Progress', 'concurrent-a')), a.post(command(4, 'Blocked', 'concurrent-b'))]);
   assert.deepEqual(race.map(r => r.status).sort(), [200, 409]);
   const before = await (await a.get('/api/tasks')).json(); await a.close(); a = await app(new FixtureStore(file));
   const after = await (await a.get('/api/tasks')).json(); assert.deepEqual(after.tasks, before.tasks); assert.equal(after.revision, 5);
