@@ -17,8 +17,9 @@ export function projectUsage(input) {
     if (!card || typeof card !== 'object' || !providers.includes(card.provider) || cards.some(item => item.provider === card.provider)) continue;
     const out = { ...pick(card, cardKeys), current_rows: list(card.current_rows, rowKeys, 20), last_known_rows: list(card.last_known_rows, rowKeys, 20) };
     if (card.provider === 'antigravity') {
-      out.model_references = list(card.model_references, [...referenceKeys], 20).map((reference, i) => ({ ...reference,
-        ...(Array.isArray(card.model_references[i]?.shared_window_ids) ? { shared_window_ids: card.model_references[i].shared_window_ids.filter(id => typeof id === 'string').slice(0, 8) } : {}) }));
+      const references = Array.isArray(card.model_references) ? card.model_references.slice(0, 20).filter(item => item && typeof item === 'object' && !Array.isArray(item)) : [];
+      out.model_references = references.map(reference => ({ ...pick(reference, referenceKeys),
+        ...(Array.isArray(reference.shared_window_ids) ? { shared_window_ids: reference.shared_window_ids.filter(id => typeof id === 'string').slice(0, 8) } : {}) }));
       for (const key of ['argon_weekly', 'last_known_argon_weekly']) if (card[key] && typeof card[key] === 'object' && !Array.isArray(card[key])) out[key] = pick(card[key], argonKeys);
     }
     cards.push(out);

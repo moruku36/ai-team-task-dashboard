@@ -381,12 +381,38 @@ async function refreshAuth() {
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { refresh(); refreshQuota(); } });
 // Owner-only manual upload of the local display file. The server keeps only allowlisted fields and refuses an older snapshot; this code never reads secrets or logs.
+// The upload is narrowed HERE, before it leaves the browser (the server filters again). Only fields the dashboard reads are copied; titles, HTTP details, tokens,
+// debug objects, derived windows and anything unknown never enter the request body. Must stay identical to cloud/usage-project.mjs (a test compares them).
+const uploadKeys = {
+  card: ['provider', 'status', 'acquisition_source', 'error_kind', 'collected_at', 'provider_updated_at', 'attempted_at', 'attempt_started_at', 'attempt_finished_at', 'retry_not_before', 'snapshot_updated_at', 'stale_after_seconds', 'account_alignment', 'last_success_collected_at'],
+  row: ['quota_scope', 'model_family', 'period', 'shared_pool', 'window_id', 'observed_at', 'reset_at', 'status', 'used_percent', 'remaining_percent'],
+  argon: ['limit_id', 'percent', 'percent_basis', 'observed_at', 'reset_at', 'reset_in_seconds'],
+  reference: ['model_id', 'quota_scope', 'shared_pool', 'pool_mapping_source', 'pool_mapping_url', 'catalog_confirmation', 'catalog_observed_at'] };
+const plainObject = value => value && typeof value === 'object' && !Array.isArray(value);
+const pickScalars = (source, keys) => Object.fromEntries(keys.filter(key => source[key] !== undefined && (typeof source[key] !== 'object' || source[key] === null)).map(key => [key, source[key]]));
+const pickList = (values, keys, max) => (Array.isArray(values) ? values.slice(0, max) : []).filter(plainObject).map(item => pickScalars(item, keys));
+function projectUsageForUpload(input) {
+  if (!plainObject(input) || input.display_schema_version !== 1 || !Array.isArray(input.cards)) throw new Error('Unsupported usage schema');
+  const cards = [];
+  for (const card of input.cards) {
+    if (!plainObject(card) || !['codex', 'claude', 'antigravity'].includes(card.provider) || cards.some(item => item.provider === card.provider)) continue;
+    const out = { ...pickScalars(card, uploadKeys.card), current_rows: pickList(card.current_rows, uploadKeys.row, 20), last_known_rows: pickList(card.last_known_rows, uploadKeys.row, 20) };
+    if (card.provider === 'antigravity') {
+      const references = Array.isArray(card.model_references) ? card.model_references.slice(0, 20).filter(plainObject) : [];
+      out.model_references = references.map(reference => ({ ...pickScalars(reference, uploadKeys.reference),
+        ...(Array.isArray(reference.shared_window_ids) ? { shared_window_ids: reference.shared_window_ids.filter(id => typeof id === 'string').slice(0, 8) } : {}) }));
+      for (const key of ['argon_weekly', 'last_known_argon_weekly']) if (plainObject(card[key])) out[key] = pickScalars(card[key], uploadKeys.argon);
+    }
+    cards.push(out);
+  }
+  return { display_schema_version: 1, view_read_at: typeof input.view_read_at === 'string' ? input.view_read_at : null, cards };
+}
 async function sendUsage() {
   const file = el('quotaFile').files?.[0], notice = el('quotaImportNotice');
   if (!file) { notice.textContent = 'ファイルを選んでください。'; return; }
   if (file.size > 100000) { notice.textContent = 'ファイルが大きすぎます(100KB以下)。'; return; }
   try {
-    const usage = JSON.parse(await file.text());
+    const usage = projectUsageForUpload(JSON.parse(await file.text()));
     const response = await fetch('/api/quota', { method: 'POST', credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(15000), headers: { 'Content-Type': 'application/json', 'X-Dashboard-Write': '1' }, body: JSON.stringify({ requestId: crypto.randomUUID(), usage }) });
     const result = await response.json().catch(() => ({}));
     notice.textContent = response.ok ? `取り込みました(受信 ${time(result.receivedAt)}・収集時刻はファイルの値のままです)` : response.status === 409 ? `取り込みを中止しました: ${result.error ?? '保存済みの方が新しい、または競合'}` : `取り込めませんでした(HTTP ${response.status})`;
@@ -401,7 +427,23 @@ const validPlanOperation = op => op && typeof op === 'object' && ['create', 'sta
   Number.isSafeInteger(op.expectedVersion) && op.expectedVersion >= 0 && (op.kind === 'create') === (op.expectedVersion === 0) && op.task && typeof op.task === 'object' && op.task.id === op.id &&
   typeof op.task.id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(op.task.id) && typeof op.task.title === 'string' && op.task.title.trim() && op.task.title.length <= 300 &&
   planStatuses.includes(op.task.status) && typeof op.task.owner === 'string' && op.task.owner.length <= 100 && (op.task.group === null || groups.includes(op.task.group)) &&
-  typeof op.task.detail === 'string' && op.task.detail.length <= 100000 && (op.task.lastConfirmedAt === null || validTime(op.task.lastConfirmedAt));
+  typeof op.task.detail === 'string' && op.task.detail.length <= 100000 && (op.task.lastConfirmedAt === null || validTime(op.task.lastConfirmedAt)) &&
+  // Every operation is bound to the local source file it was made from; a plan without that binding is never applied.
+  typeof op.sourceFile === 'string' && /^[^\\/]{1,200}\.md$/.test(op.sourceFile) && typeof op.sourceSha256 === 'string' && /^[0-9a-f]{64}$/.test(op.sourceSha256) && Number.isSafeInteger(op.sourceMtimeMs) && op.sourceMtimeMs > 0;
+const hex = buffer => [...new Uint8Array(buffer)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+// The browser cannot look at the local backlog by itself. The owner must select the source files named in the plan; this code hashes exactly those bytes and refuses to send anything
+// unless every one equals the plan's hash and was not modified after the plan was made. Limits (not hidden): it checks the files the owner picked, at the moment of picking; a stale copy picked
+// instead of the live file, or a change after this check, is not detected here (the cloud's expectedVersion still protects the cloud side).
+async function verifySources(operations, plan) {
+  const picked = new Map([...(el('planSources').files ?? [])].map(file => [file.name, file])), problems = [];
+  for (const op of operations) {
+    const file = picked.get(op.sourceFile);
+    if (!file) { problems.push(`${op.id}: ${op.sourceFile} が選ばれていません`); continue; }
+    if (file.lastModified > op.sourceMtimeMs) { problems.push(`${op.id}: ファイルがプラン作成後に更新されています`); continue; }
+    if (hex(await crypto.subtle.digest('SHA-256', await file.arrayBuffer())) !== op.sourceSha256) problems.push(`${op.id}: 内容がプラン作成時と違います`);
+  }
+  return problems;
+}
 async function applyPlan() {
   const notice = el('planNotice'), file = el('planFile').files?.[0];
   if (!file) { notice.textContent = 'プランファイルを選んでください。'; return; }
@@ -412,6 +454,9 @@ async function applyPlan() {
   if (!Array.isArray(operations) || !operations.length || operations.length > 30 || !operations.every(validPlanOperation) || new Set(operations.map(op => op.id)).size !== operations.length || !validTime(plan.generatedAt)) { notice.textContent = 'プランの形式が不正です。何も送っていません。'; return; }
   const age = Date.now() - Date.parse(plan.generatedAt);
   if (age > 30 * 60000 || age < -60000) { notice.textContent = 'プランが古い(30分超)か時刻が不正です。作り直してください。何も送っていません。'; return; }
+  let problems;
+  try { problems = await verifySources(operations, plan); } catch { problems = ['ローカルファイルを検証できません']; }
+  if (problems.length) { notice.textContent = `ローカル検証に失敗したため適用しません(何も送っていません): ${problems.slice(0, 5).join(' / ')}${problems.length > 5 ? ` ほか${problems.length - 5}件` : ''}`; return; }
   const created = operations.filter(op => op.kind === 'create').length;
   if (!globalThis.confirm?.(`${operations.length}件を順に適用します(作成 ${created}・状態更新 ${operations.length - created})。競合した時点で中止し、巻き戻しはしません。`)) { notice.textContent = '中止しました。何も送っていません。'; return; }
   const applied = []; busy = true;

@@ -85,30 +85,59 @@ export async function publicQuota(quotaStore, now = new Date()) {
 }
 // Owner-only replacement of the saved display snapshot. The caller sends the local display file; only allowlisted fields are kept (projectUsage).
 // Freshness is never decided here: collected_at/observed_at are stored as the collector reported them and evaluated at read time.
-// A snapshot older than what is stored for a provider is refused (409), so a late or replayed upload cannot roll the display back.
+// Before anything is stored: timestamps must be well-formed, collected_at is required, and nothing the collector "observed" may lie in the future
+// (a wrong future value would otherwise block every later correct upload). A snapshot older than what is stored for a provider is refused (409).
+// For the same collection time, different content is a conflict (409); identical content is a harmless repeat. Request IDs are remembered in a bounded history.
 // receivedAt is the server's receipt time and is stored apart from every collection/observation field.
+export const FUTURE_SKEW_MS = 5 * 60000, EARLIEST_MS = Date.parse('2020-01-01T00:00:00Z'), RECEIPT_LIMIT = 50;
+const OBSERVED_TIMES = ['collected_at', 'last_success_collected_at', 'provider_updated_at', 'snapshot_updated_at', 'attempted_at', 'attempt_started_at', 'attempt_finished_at'];
+function checkUsageTimes(usage, nowMs) {
+  const bad = () => new Problem(400, 'Invalid usage timestamps');
+  const observed = value => { if (value === null || value === undefined) return; const t = parseIsoTimestamp(value); if (t === null || t < EARLIEST_MS || t > nowMs + FUTURE_SKEW_MS) throw bad(); };
+  const anyTime = value => { if (value === null || value === undefined) return; const t = parseIsoTimestamp(value); if (t === null || t < EARLIEST_MS) throw bad(); };
+  observed(usage.view_read_at);
+  for (const card of usage.cards) {
+    if (parseIsoTimestamp(card.collected_at) === null) throw bad();            // collection time is required
+    for (const key of OBSERVED_TIMES) observed(card[key]);
+    anyTime(card.retry_not_before);
+    for (const row of [...card.current_rows, ...card.last_known_rows]) { observed(row.observed_at); anyTime(row.reset_at); }
+    for (const key of ['argon_weekly', 'last_known_argon_weekly']) if (card[key]) { observed(card[key].observed_at); anyTime(card[key].reset_at); }
+    for (const reference of card.model_references ?? []) observed(reference.catalog_observed_at);
+  }
+}
 export async function updateUsageSnapshot(store, command, now = new Date()) {
   if (!command || typeof command !== 'object' || Array.isArray(command) || Object.keys(command).some(key => !['requestId', 'usage'].includes(key)) ||
       typeof command.requestId !== 'string' || !/^[A-Za-z0-9_-]{8,100}$/.test(command.requestId) || ['__proto__', 'constructor', 'prototype'].includes(command.requestId)) throw new Problem(400, 'Request ID and usage required');
   let usage; try { usage = projectUsage(command.usage); } catch { throw new Problem(400, 'Invalid usage snapshot'); }
   if (!usage.cards.length) throw new Problem(400, 'Invalid usage snapshot');
+  checkUsageTimes(usage, now.getTime());
   const fingerprint = createHash('sha256').update(JSON.stringify(usage)).digest('hex');
+  const cardPrint = card => createHash('sha256').update(JSON.stringify(card)).digest('hex');
   return store.transaction(board => {
     const quota = board.quota && typeof board.quota === 'object' && !Array.isArray(board.quota) ? board.quota : { records: [] };
-    const prior = quota.usageUpdate;
-    if (prior?.requestId === command.requestId) {
+    const receipts = quota.usageReceipts && typeof quota.usageReceipts === 'object' && !Array.isArray(quota.usageReceipts) ? quota.usageReceipts : {};
+    const prior = Object.hasOwn(receipts, command.requestId) ? receipts[command.requestId] : undefined;
+    if (prior) {
       if (prior.fingerprint !== fingerprint) throw new Problem(409, 'Request ID already used with another snapshot');
       return { ok: true, duplicate: true, receivedAt: prior.receivedAt, providers: prior.providers };
     }
     const before = collectionTimes(quota.usageSnapshot), after = collectionTimes(usage);
-    for (const [provider, next] of Object.entries(after)) {
-      if (!Number.isFinite(next) && Number.isFinite(before[provider])) throw new Problem(409, 'Snapshot has no collection time for a stored provider');
-      if (Number.isFinite(next) && Number.isFinite(before[provider]) && next < before[provider]) throw new Problem(409, 'Snapshot is older than the stored one');
+    const storedCards = new Map((quota.usageSnapshot?.cards ?? []).map(card => [card.provider, card]));
+    let changed = false;
+    for (const card of usage.cards) {
+      const next = after[card.provider], stored = storedCards.get(card.provider);
+      if (!stored) { changed = true; continue; }
+      if (!Number.isFinite(before[card.provider])) { changed = true; continue; }
+      if (next < before[card.provider]) throw new Problem(409, 'Snapshot is older than the stored one');
+      if (next === before[card.provider]) { if (cardPrint(stored) !== cardPrint(card)) throw new Problem(409, 'Same collection time with different content'); } else changed = true;
     }
     const kept = (quota.usageSnapshot?.cards ?? []).filter(card => !Object.hasOwn(after, card.provider));
-    const providers = usage.cards.map(card => ({ provider: card.provider, collectedAt: Number.isFinite(after[card.provider]) ? new Date(after[card.provider]).toISOString() : null }));
-    board.quota = { ...quota, records: Array.isArray(quota.records) ? quota.records : [], usageSnapshot: { ...usage, cards: [...usage.cards, ...kept] },
-      usageUpdate: { requestId: command.requestId, fingerprint, receivedAt: now.toISOString(), providers } };
-    return { ok: true, duplicate: false, receivedAt: now.toISOString(), providers };
+    const providers = usage.cards.map(card => ({ provider: card.provider, collectedAt: new Date(after[card.provider]).toISOString() }));
+    const receipt = { fingerprint, receivedAt: now.toISOString(), providers };
+    const history = Object.entries({ ...receipts, [command.requestId]: receipt }).slice(-RECEIPT_LIMIT);
+    board.quota = { ...quota, records: Array.isArray(quota.records) ? quota.records : [],
+      usageSnapshot: changed ? { ...usage, cards: [...usage.cards.map(card => (storedCards.has(card.provider) && after[card.provider] === before[card.provider] ? storedCards.get(card.provider) : card)), ...kept] } : quota.usageSnapshot,
+      usageUpdate: { requestId: command.requestId, ...receipt }, usageReceipts: Object.fromEntries(history) };
+    return { ok: true, duplicate: false, unchanged: !changed, receivedAt: receipt.receivedAt, providers };
   });
 }

@@ -4,7 +4,7 @@
 // decisions.json: { "date": "20261022", "status": { "TASK-20": "Done" }, "group": { "TASK-20": "完了履歴" }, "create": ["TASK-115"], "hold": { "TASK-1": "reason" } }
 // `group` is optional and opt-in per card; groups never change implicitly. Differences are listed in groupMismatches for a decision.
 // The plan and any records it writes are real data: keep them OUTSIDE the repository (this script refuses a path inside a git checkout).
-import { readFileSync, readdirSync, writeFileSync, existsSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync, existsSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, dirname, resolve, parse } from 'node:path';
 import { convertBacklogFiles } from '../cloud/import-snapshot.mjs';
@@ -12,7 +12,7 @@ import { taskInput } from '../cloud/model.mjs';
 
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const insideCheckout = path => { for (let dir = dirname(resolve(path)); ; dir = dirname(dir)) { if (existsSync(join(dir, '.git'))) return true; if (dir === parse(dir).root) return false; } };
-const readDir = dir => (existsSync(dir) ? readdirSync(dir) : []).filter(name => name.endsWith('.md')).map(name => { const bytes = readFileSync(join(dir, name)); return { filename: name, bytes, base64: bytes.toString('base64') }; });
+const readDir = dir => (existsSync(dir) ? readdirSync(dir) : []).filter(name => name.endsWith('.md')).map(name => { const bytes = readFileSync(join(dir, name)); return { filename: name, bytes, base64: bytes.toString('base64'), mtimeMs: statSync(join(dir, name)).mtimeMs }; });
 const idOf = file => /^id:\s*(\S+)/m.exec(file.bytes.toString('utf8'))?.[1];
 
 function convertAll(files) {
@@ -41,7 +41,7 @@ export function buildPlan({ localFiles, archiveFiles = [], cloud, decisions, now
     if (cloudById.has(id)) { hold(id, 'クラウドに同じIDが既にあります(作成しない)'); continue; }
     if (source.task.detail.length > 100000) { hold(id, '本文が100000文字を超えます(切り捨てません)'); continue; }
     plan.operations.push({ kind: 'create', requestId: `sync${date}-${id}-create`, expectedVersion: 0, id, from: null, to: { status: source.task.status, group: source.task.group, owner: source.task.owner },
-      sourceSha256: source.sha256, sourceFile: source.file.filename, task: taskInput({ id, title: source.task.title, status: source.task.status, owner: source.task.owner, group: source.task.group, detail: source.task.detail, lastConfirmedAt: source.task.lastConfirmedAt }) });
+      sourceSha256: source.sha256, sourceFile: source.file.filename, sourceMtimeMs: Math.floor(source.file.mtimeMs) || null, task: taskInput({ id, title: source.task.title, status: source.task.status, owner: source.task.owner, group: source.task.group, detail: source.task.detail, lastConfirmedAt: source.task.lastConfirmedAt }) });
   }
   for (const [id, status] of Object.entries(decisions.status ?? {})) {
     const source = local.get(id), current = cloudById.get(id);
@@ -51,7 +51,7 @@ export function buildPlan({ localFiles, archiveFiles = [], cloud, decisions, now
     // Only the status changes. The display group changes ONLY when decisions.group names it for this card; owner, title, body and confirmation time stay as the cloud has them.
     const group = decisions.group?.[id] ?? current.group;
     plan.operations.push({ kind: 'status', requestId: `sync${date}-${id}-v${current.version}`, expectedVersion: current.version, id, from: { status: current.status, group: current.group }, to: { status, group },
-      sourceSha256: source.sha256, sourceFile: source.file.filename, task: taskInput({ id, title: current.title, status, owner: current.owner, group, detail: current.detail, lastConfirmedAt: current.lastConfirmedAt }) });
+      sourceSha256: source.sha256, sourceFile: source.file.filename, sourceMtimeMs: Math.floor(source.file.mtimeMs) || null, task: taskInput({ id, title: current.title, status, owner: current.owner, group, detail: current.detail, lastConfirmedAt: current.lastConfirmedAt }) });
   }
   for (const [id, reason] of Object.entries(decisions.hold ?? {})) hold(id, reason);
   const planned = new Set(plan.operations.map(op => op.id)), held = new Set(plan.holds.map(h => h.id));

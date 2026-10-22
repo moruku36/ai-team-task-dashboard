@@ -2,14 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { runInContext, createContext } from 'node:vm';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, webcrypto } from 'node:crypto';
 import { app, FixtureStore, env } from './fixtures.mjs';
 import { buildPlan, verifyPlan } from '../../scripts/ticket-sync-plan.mjs';
 
 // Synthetic tickets only. Local files are Backlog-style markdown; the cloud side is a GET /api/tasks-shaped snapshot.
 const md = (id, status, { assignee = ['@synthetic'], labels = ['表示:現行'], updated = "'2026-10-20 09:00'", body = 'local body' } = {}) =>
   `---\nid: ${id}\ntitle: 'Synthetic ${id}'\nstatus: ${status}\n${assignee.length ? `assignee:\n${assignee.map(a => `  - '${a}'`).join('\n')}\n` : 'assignee: []\n'}${labels.length ? `labels:\n${labels.map(l => `  - '${l}'`).join('\n')}\n` : 'labels: []\n'}created_date: '2026-10-11 09:00'\n${updated ? `updated_date: ${updated}\n` : ''}---\n## Description\n${body}\n`;
-const file = (id, text) => { const bytes = Buffer.from(text); return { filename: `${id}.md`, bytes, base64: bytes.toString('base64') }; };
+const PLAN_TIME = Date.now(), file = (id, text) => { const bytes = Buffer.from(text); return { filename: `${id}.md`, bytes, base64: bytes.toString('base64'), mtimeMs: PLAN_TIME - 3600000 }; };
 const cloudTask = (id, status, version, over = {}) => ({ id, title: `Cloud title ${id}`, status, owner: 'cloud-owner', group: '現行', detail: `CLOUD BODY ${id}`, lastConfirmedAt: null, version, updatedAt: '2026-10-15T00:00:00.000Z', ...over });
 const local = [file('T-1', md('T-1', 'Done', { labels: ['表示:完了履歴'] })), file('T-2', md('T-2', 'Done')), file('T-3', md('T-3', 'In Progress')), file('T-4', md('T-4', 'Done')),
   file('N-1', md('N-1', 'In Progress')), file('N-2', md('N-2', 'To Do', { assignee: [], labels: [], updated: null })), file('N-3', md('N-3', 'To Do', { body: 'x'.repeat(100001) })),
@@ -64,12 +64,13 @@ async function harness(t, { confirm = () => true } = {}) {
   const store = new FixtureStore(); store.state = { revision: 9, receipts: {}, audit: [], tasks: cloud.tasks.map(({ ...x }) => x) };
   const a = await app(store); t.after(() => a.close());
   const elements = new Map(), el = id => { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id); }, posts = [];
-  const context = createContext({ document: { hidden: false, getElementById: el, createElement: () => new Element(), addEventListener() {} }, crypto: { randomUUID }, AbortSignal, setInterval() {}, Intl, confirm,
+  const context = createContext({ document: { hidden: false, getElementById: el, createElement: () => new Element(), addEventListener() {} }, crypto: { randomUUID, subtle: webcrypto.subtle }, AbortSignal, setInterval() {}, Intl, confirm,
     fetch: (path, options) => { if (options?.method === 'POST') posts.push(JSON.parse(options.body)); return fetch(a.url + path, { ...options, headers: { ...options?.headers, Origin: env.DASHBOARD_ORIGIN } }); } });
   runInContext(await readFile(new URL('../public/app.js', import.meta.url), 'utf8'), context);
   await runInContext('refresh()', context);
-  const run = async p => { el('planFile').files = [{ size: 1000, text: async () => JSON.stringify(p) }]; await el('planSend').onclick(); return el('planNotice').textContent; };
-  return { store, run, posts, el };
+  const picked = (files = local, over = {}) => files.map(f => ({ name: f.filename, size: f.bytes.length, lastModified: PLAN_TIME - 3600000, arrayBuffer: async () => f.bytes.buffer.slice(f.bytes.byteOffset, f.bytes.byteOffset + f.bytes.length), ...over }));
+  const run = async (p, sources = picked()) => { el('planFile').files = [{ size: 1000, text: async () => JSON.stringify(p) }]; el('planSources').files = sources; await el('planSend').onclick(); return el('planNotice').textContent; };
+  return { store, run, posts, el, picked };
 }
 
 test('apply UI: one validated POST per operation, deduplicated on repeat, history and versions correct, cloud body untouched', async t => {
@@ -110,4 +111,19 @@ test('apply UI: stale, malformed, cancelled or empty plans send nothing', async 
   assert.match(await h2.run({ ...plan, operations: [{ ...plan.operations[0], expectedVersion: 3 }] }), /形式が不正/);
   assert.match(await h2.run({ ...plan, operations: [] }), /形式が不正/);
   assert.equal(h.posts.length + h2.posts.length, 0); assert.equal((await h2.store.read()).revision, 9);
+});
+
+test('apply UI: the plan is bound to the local source files; unverified, changed, newer or unbound inputs send nothing', async t => {
+  const h = await harness(t); const sent = () => h.posts.length;
+  assert.match(await h.run(plan, []), /ローカル検証に失敗.*選ばれていません/);                     // no source files selected: not a substitute for verification
+  const changed = local.map(f => (f.filename === 'T-2.md' ? file('T-2', md('T-2', 'Done', { body: 'edited after the plan' })) : f));
+  assert.match(await h.run(plan, h.picked(changed)), /T-2: 内容がプラン作成時と違います/);
+  assert.match(await h.run(plan, h.picked(local, { lastModified: PLAN_TIME + 60000 })), /プラン作成後に更新されています/);
+  assert.match(await h.run(plan, h.picked(local.filter(f => f.filename !== 'N-1.md'))), /N-1: N-1\.md が選ばれていません/);
+  const unbound = { ...plan, operations: plan.operations.map(({ sourceSha256, sourceFile, sourceMtimeMs, ...rest }) => rest) };          // a plan made without source binding
+  assert.match(await h.run(unbound), /形式が不正/);
+  const noHash = { ...plan, operations: plan.operations.map(op => ({ ...op, sourceSha256: 'zz' })) }; assert.match(await h.run(noHash), /形式が不正/);
+  const noMtime = { ...plan, operations: plan.operations.map(op => ({ ...op, sourceMtimeMs: null })) }; assert.match(await h.run(noMtime), /形式が不正/);
+  assert.equal(sent(), 0, 'nothing was sent in any refused case'); assert.equal((await h.store.read()).revision, 9);
+  assert.match(await h.run(plan), /5件を適用しました/);                                            // the same plan with the verified files goes through
 });
