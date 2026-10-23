@@ -63,19 +63,26 @@ const fetched = () => snapshot.revision !== undefined;
 const count = n => fetched() ? n : '—';
 const time = value => value ? new Date(value).toLocaleString('ja-JP') : '未記録';
 const node = (tag, text, className) => { const n = document.createElement(tag); n.textContent = text; if (className) n.className = className; return n; };
+// Board filter. Without a query only the selected group is shown. With a query the search spans every group (including 未分類), so a card is findable by its ID
+// or text wherever it was filed; each result then names its own group. The ID is searched explicitly (it is not guaranteed to appear in the body).
+const boardMatch = (task, selectedGroup, status, query) => task.status === status && (query === '' ? task.group === selectedGroup : `${task.id} ${task.title} ${task.owner || '担当未設定'} ${task.detail}`.toLocaleLowerCase().includes(query));
+// Public read-back of a plan: an operation counts as confirmed only when the cloud snapshot now carries at least the version it produces and every field it wrote.
+const readBackFields = ['title', 'owner', 'status', 'group', 'detail', 'lastConfirmedAt'];
+const readBackConfirmed = (operations, tasks) => operations.filter(op => { const current = tasks.find(task => task.id === op.id); return Boolean(current) && current.version >= op.expectedVersion + 1 && readBackFields.every(key => current[key] === op.task[key]); }).length;
 function render() {
   el('groups').replaceChildren(...[...groups, null].map(g => {
     const b = node('button', `${g ?? '未分類'} · ${count(snapshot.tasks.filter(t => t.group === g).length)}`, group === g ? 'active' : '');
     b.onclick = () => { group = g; render(); }; return b;
   }));
-  const query = el('search').value.toLocaleLowerCase();
+  const query = el('search').value.trim().toLocaleLowerCase();
   el('board').replaceChildren(...states.map((s, i) => {
     const column = node('section', '', 'column');
-    const tasks = snapshot.tasks.filter(t => t.group === group && t.status === s && `${t.title} ${t.owner || '担当未設定'} ${t.detail}`.toLocaleLowerCase().includes(query));
+    const tasks = snapshot.tasks.filter(t => boardMatch(t, group, s, query));
     column.append(node('h2', `${names[i]} · ${count(tasks.length)}`));
     for (const task of tasks) {
       const card = node('button', '', 'card'); card.append(node('span', task.id, 'id'), node('strong', task.title),
         node('small', `主担当: ${task.owner || '未設定'}`), node('small', `更新: ${time(task.updatedAt)}`), node('small', `確認: ${time(task.lastConfirmedAt)}`));
+      if (query !== '') card.append(node('small', `表示グループ: ${task.group ?? '未分類'}`, 'quota-badge'));
       if (task.legacyStatus) card.append(node('small', `${legacyNames[task.legacyStatus]}から表示（要確認・自動完了にはしません）`, 'quota-badge'));
       if (pendingRequests.has(task.id)) card.append(node('small', '保存結果が未確認'));
       card.onclick = () => {
@@ -92,13 +99,13 @@ function render() {
   }));
 }
 async function refresh() {
-  if (busy || document.hidden) return;
+  if (busy || document.hidden) return false;
   const generation = ++readGeneration;
   try {
     const response = await fetch('/api/tasks', { cache: 'no-store', credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(15000) });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const next = await response.json();
-    if (generation !== readGeneration || busy) return;
+    if (generation !== readGeneration || busy) return false;
     if (!validSnapshot(next) || !advancesSnapshot(next)) throw new Error('Invalid or older snapshot');
     snapshot = next; online = true;
     el('connection').textContent = '接続中'; el('times').textContent = `タスク一覧の同期: ${time(snapshot.observedAt)} · 30秒ごとに表示を確認`;
@@ -109,13 +116,14 @@ async function refresh() {
       if (selectedStale) el('saveNotice').textContent = '詳細を開いた後に更新されました。閉じて最新のカードを開き直してください。';
     }
   } catch {
-    if (generation !== readGeneration || busy) return;
+    if (generation !== readGeneration || busy) return false;
     online = false; el('connection').textContent = '接続できません';
     // Only claim "last received" when an accepted snapshot actually exists; otherwise nothing was ever received.
     if (fetched()) { el('times').textContent = `タスク一覧の同期: ${time(snapshot.observedAt)} · 古い可能性があります(再取得できていません)`; el('notice').textContent = '表示は最後に取得した状態で、古い可能性があります。更新ボタンで再接続できます。'; }
     else { el('times').textContent = '未取得'; el('notice').textContent = 'まだタスクを取得できていません(0件ではありません)。更新ボタンで再接続できます。'; }
   }
   el('save').disabled = busy || !online || !selected || selectedStale;
+  return online;
 }
 el('detail').onclose = () => { ++detailGeneration; selected = undefined; selectedStale = false; el('save').disabled = true; };
 el('status').append(keepOption, ...states.map((s, i) => { const option = node('option', names[i]); option.value = s; return option; }));
@@ -309,14 +317,24 @@ function renderQuotaDetails(quota, target) {
   items.push(node('small', `配信: ${time(quota.servedAt)}`));
   target.replaceChildren(...(quota.entries.length ? items : [node('p', 'クォータ情報は未接続です(不明)'), items.at(-1)]));
 }
+// Ordering guard (same idea as the task snapshot): a response that was started earlier, or that carries older collection times than what is already shown, never replaces the view.
+// Keys are provider-scoped per source ('entry:' / 'usage:') and only compared where both responses contain them; a later response may legitimately omit a provider.
+let quotaGeneration = 0, quotaAccepted = null;
+const quotaClock = quota => { const marks = new Map(); const mark = (key, value) => { const t = Date.parse(value); if (Number.isFinite(t)) marks.set(key, Math.max(marks.get(key) ?? -Infinity, t)); };
+  for (const entry of quota?.entries ?? []) mark(`entry:${entry.provider}`, entry.collectedAt); for (const card of quota?.usage?.cards ?? []) mark(`usage:${card.provider}`, card.collected_at); return marks; };
+const quotaAdvances = (shown, next) => { if (!shown) return true; if (Date.parse(next.servedAt) < Date.parse(shown.servedAt)) return false;
+  const before = quotaClock(shown), after = quotaClock(next); for (const [key, t] of before) if (after.has(key) && after.get(key) < t) return false; return true; };
 async function refreshQuota() {
+  const generation = ++quotaGeneration;
   try {
     const response = await fetch('/api/quota', { cache: 'no-store', credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(15000) });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const next = await response.json();
+    if (generation !== quotaGeneration) return; // a newer read started meanwhile; it decides what is shown
     if (!validQuota(next)) throw new Error('Invalid quota');
-    renderQuota(next);
-  } catch { el('quota').replaceChildren(node('p', 'クォータ情報を取得できません(不明)')); }
+    if (!quotaAdvances(quotaAccepted, next)) return; // older data never replaces what is already shown
+    quotaAccepted = next; renderQuota(next);
+  } catch { if (generation !== quotaGeneration) return; quotaAccepted = null; el('quota').replaceChildren(node('p', 'クォータ情報を取得できません(不明)')); }
 }
 // Sign-in panel. State comes from the server (/api/auth/status: anonymous|owner|forbidden); no name, email or account id is ever requested or shown.
 const authLabels = { anonymous: 'サインインしてください', owner: 'サインイン済み', forbidden: 'このアカウントには権限がありません', diagnostic: 'オーナー未設定(診断モード)' };
@@ -423,24 +441,55 @@ if (el('quotaSend')) el('quotaSend').onclick = sendUsage;
 // Owner-only one-time apply of a ticket sync plan (made by scripts/ticket-sync-plan.mjs). Each operation is one ordinary POST /api/tasks with its own fixed requestId and
 // expectedVersion, so a repeat is deduplicated and a changed card (409) stops the run. Nothing is rolled back automatically; the notice lists what was applied.
 const planStatuses = ['To Do', 'In Progress', 'Blocked', 'Done'];
-const validPlanOperation = op => op && typeof op === 'object' && ['create', 'status'].includes(op.kind) && typeof op.requestId === 'string' && /^[A-Za-z0-9_-]{8,100}$/.test(op.requestId) &&
+const validPlanOperation = op => op && typeof op === 'object' && ['create', 'status', 'content'].includes(op.kind) && typeof op.requestId === 'string' && /^[A-Za-z0-9_-]{8,100}$/.test(op.requestId) &&
   Number.isSafeInteger(op.expectedVersion) && op.expectedVersion >= 0 && (op.kind === 'create') === (op.expectedVersion === 0) && op.task && typeof op.task === 'object' && op.task.id === op.id &&
   typeof op.task.id === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(op.task.id) && typeof op.task.title === 'string' && op.task.title.trim() && op.task.title.length <= 300 &&
   planStatuses.includes(op.task.status) && typeof op.task.owner === 'string' && op.task.owner.length <= 100 && (op.task.group === null || groups.includes(op.task.group)) &&
   typeof op.task.detail === 'string' && op.task.detail.length <= 100000 && (op.task.lastConfirmedAt === null || validTime(op.task.lastConfirmedAt)) &&
+  // A content operation states its body change (sizes and hashes, never text); the new size must match the body it will send. A non-content operation carries none.
+  (op.kind === 'content' ? Boolean(op.bodyChange) && Number.isSafeInteger(op.bodyChange.fromChars) && op.bodyChange.fromChars >= 0 && op.bodyChange.toChars === op.task.detail.length &&
+    [op.bodyChange.fromSha256, op.bodyChange.toSha256].every(h => typeof h === 'string' && /^[0-9a-f]{64}$/.test(h)) && op.bodyChange.fromSha256 !== op.bodyChange.toSha256 : op.bodyChange === undefined) &&
+  (op.kind === 'create' ? op.from === null || op.from === undefined : typeof op.from?.status === 'string') &&
   // Every operation is bound to the local source file it was made from; a plan without that binding is never applied.
   typeof op.sourceFile === 'string' && /^[^\\/]{1,200}\.md$/.test(op.sourceFile) && typeof op.sourceSha256 === 'string' && /^[0-9a-f]{64}$/.test(op.sourceSha256) && Number.isSafeInteger(op.sourceMtimeMs) && op.sourceMtimeMs > 0;
 const hex = buffer => [...new Uint8Array(buffer)].map(byte => byte.toString(16).padStart(2, '0')).join('');
 // The browser cannot look at the local backlog by itself. The owner must select the source files named in the plan; this code hashes exactly those bytes and refuses to send anything
-// unless every one equals the plan's hash and was not modified after the plan was made. Limits (not hidden): it checks the files the owner picked, at the moment of picking; a stale copy picked
-// instead of the live file, or a change after this check, is not detected here (the cloud's expectedVersion still protects the cloud side).
+// unless every one equals the plan's hash and exact mtime. Limits: this checks the selected files, not their filesystem location; an identical copy with the same mtime or
+// a change after this check cannot be distinguished here (the cloud's expectedVersion still protects the cloud side).
 async function verifySources(operations, plan) {
   const picked = new Map([...(el('planSources').files ?? [])].map(file => [file.name, file])), problems = [];
   for (const op of operations) {
     const file = picked.get(op.sourceFile);
     if (!file) { problems.push(`${op.id}: ${op.sourceFile} が選ばれていません`); continue; }
-    if (file.lastModified > op.sourceMtimeMs) { problems.push(`${op.id}: ファイルがプラン作成後に更新されています`); continue; }
+    if (file.lastModified !== op.sourceMtimeMs) { problems.push(`${op.id}: ファイルの更新時刻がプランと一致しません(プラン作成後に更新されています、または別コピーです)`); continue; }
     if (hex(await crypto.subtle.digest('SHA-256', await file.arrayBuffer())) !== op.sourceSha256) problems.push(`${op.id}: 内容がプラン作成時と違います`);
+    if (op.kind === 'content' && (op.bodyChange.toSha256 !== op.sourceSha256 ||
+      hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(op.task.detail))) !== op.bodyChange.toSha256)) problems.push(`${op.id}: 本文と元ファイルのハッシュが一致しません`);
+  }
+  return problems;
+}
+// One line per operation for the confirm dialog: what changes, and in particular that a body is replaced (old/new size) and whether the status stays. Text itself is never shown.
+const planPreview = operations => operations.map(op => {
+  if (op.kind === 'create') return `${op.id}: 新規作成(${op.task.status}・${op.task.group ?? '未分類'}・本文${op.task.detail.length}文字)`;
+  const statusText = op.from.status === op.task.status ? `状態は${op.task.status}のまま` : `状態 ${op.from.status}→${op.task.status}${op.from.status === 'Done' ? '(完了からの再開)' : ''}`;
+  const groupText = op.from.group === op.task.group ? '' : `・分類 ${op.from.group ?? '未分類'}→${op.task.group ?? '未分類'}`;
+  return op.kind === 'content' ? `${op.id}: 本文を置き換え(${op.bodyChange.fromChars}→${op.bodyChange.toChars}文字・${statusText})${groupText}` : `${op.id}: ${statusText}(本文は変更しない)${groupText}`;
+});
+// Bind the preview to a newly fetched owner snapshot. The server's CAS still handles a race after this check.
+async function verifyPlanBaseline(operations, tasks) {
+  const problems = [];
+  for (const op of operations) {
+    const current = tasks.find(task => task.id === op.id);
+    // An uncertain/lost ACK may be replayed with the SAME request ID and exact task; the server deduplicates it.
+    if (current && current.version >= op.expectedVersion + 1 && readBackFields.every(key => current[key] === op.task[key])) continue;
+    if (op.kind === 'create') { if (current) problems.push(`${op.id}: 既に同じIDがあります`); continue; }
+    if (!current || current.version !== op.expectedVersion || current.status !== op.from.status || current.group !== op.from.group) {
+      problems.push(`${op.id}: 版数・状態・分類が変わりました`); continue;
+    }
+    if (['title', 'owner', 'lastConfirmedAt'].some(key => current[key] !== op.task[key])) { problems.push(`${op.id}: 保持する項目が一致しません`); continue; }
+    if (op.kind === 'status' && current.detail !== op.task.detail) problems.push(`${op.id}: 状態更新では本文を変更できません`);
+    if (op.kind === 'content' && (current.detail.length !== op.bodyChange.fromChars ||
+      hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(current.detail))) !== op.bodyChange.fromSha256)) problems.push(`${op.id}: 置換前本文がプランと一致しません`);
   }
   return problems;
 }
@@ -457,8 +506,11 @@ async function applyPlan() {
   let problems;
   try { problems = await verifySources(operations, plan); } catch { problems = ['ローカルファイルを検証できません']; }
   if (problems.length) { notice.textContent = `ローカル検証に失敗したため適用しません(何も送っていません): ${problems.slice(0, 5).join(' / ')}${problems.length > 5 ? ` ほか${problems.length - 5}件` : ''}`; return; }
-  const created = operations.filter(op => op.kind === 'create').length;
-  if (!globalThis.confirm?.(`${operations.length}件を順に適用します(作成 ${created}・状態更新 ${operations.length - created})。競合した時点で中止し、巻き戻しはしません。`)) { notice.textContent = '中止しました。何も送っていません。'; return; }
+  if (!await refresh()) { notice.textContent = '公開側の最新一覧を取得できません。何も送っていません。再接続後に確認してください。'; return; }
+  try { problems = await verifyPlanBaseline(operations, snapshot.tasks); } catch { problems = ['公開側の内容を検証できません']; }
+  if (problems.length) { notice.textContent = `適用前の照合で中止しました(何も送っていません): ${problems.slice(0, 5).join(' / ')}`; return; }
+  const created = operations.filter(op => op.kind === 'create').length, content = operations.filter(op => op.kind === 'content').length;
+  if (!globalThis.confirm?.(`${operations.length}件を順に適用します(作成 ${created}・本文更新 ${content}・状態更新 ${operations.length - created - content})。競合した時点で中止し、巻き戻しはしません。\n${planPreview(operations).join('\n')}`)) { notice.textContent = '中止しました。何も送っていません。'; return; }
   const applied = []; busy = true;
   try {
     for (const op of operations) {
@@ -467,10 +519,20 @@ async function applyPlan() {
       try { response = await fetch('/api/tasks', { method: 'POST', credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(15000), headers: { 'Content-Type': 'application/json', 'X-Dashboard-Write': '1' }, body: JSON.stringify({ requestId: op.requestId, expectedVersion: op.expectedVersion, task }) }); }
       catch { notice.textContent = `${op.id}の結果が未確認です。適用済み: ${applied.join(', ') || 'なし'}。同じファイルでもう一度適用すると、同じ要求IDで重複なく再送されます。`; return; }
       if (!response.ok) { notice.textContent = `${op.id}で中止しました(HTTP ${response.status}${response.status === 409 ? '・競合: カードが変更されています' : ''})。適用済み: ${applied.join(', ') || 'なし'}。残りは送っていません。自動では戻しません。`; return; }
+      let saved;
+      try { saved = await response.json(); } catch { /* HTTP success alone is not a task acknowledgement. */ }
+      if (!validTask(saved) || saved.version !== op.expectedVersion + 1 || !acknowledges(saved, { task }, snapshot.tasks.find(t => t.id === op.id)?.legacyStatus)) {
+        notice.textContent = `${op.id}の結果が未確認です。適用済み: ${applied.join(', ') || 'なし'}。同じ要求ID・内容を保全し、再取得して照合してください。`; return;
+      }
+      acknowledgedVersions.set(op.id, Math.max(acknowledgedVersions.get(op.id) ?? 0, saved.version));
       applied.push(op.id);
     }
     notice.textContent = `${applied.length}件を適用しました: ${applied.join(', ')}`;
   } finally { busy = false; await refresh(); }
+  // Reached only when every POST succeeded. "Applied" (the server accepted the writes) and "visible on the public board" (a fresh snapshot carries them) are separate facts;
+  // the second is stated only from a snapshot read after the writes, never assumed.
+  if (!document.hidden && online) notice.textContent = `${applied.length}件を適用しました: ${applied.join(', ')}。公開側の読み戻し: ${readBackConfirmed(operations, snapshot.tasks)}/${operations.length}件がプラン内容と一致`;
+  else notice.textContent = `${applied.length}件を適用しました: ${applied.join(', ')}。公開側の読み戻しは未確認です(再取得できていません)`;
 }
 if (el('planSend')) el('planSend').onclick = applyPlan;
 el('times').textContent = '未取得'; render(); refresh(); setInterval(refresh, 30000); setInterval(refreshQuota, 30000);
