@@ -91,8 +91,11 @@ test('apply UI: one validated POST per operation, deduplicated on repeat, histor
 });
 
 test('apply UI: a changed card stops the run at that card; earlier ones stay, later ones are not sent', async t => {
-  const h = await harness(t);
-  const board = await h.store.read(); board.tasks.find(x => x.id === 'T-2').version = 99; h.store.state = board;       // someone changed T-2 after the plan
+  let h;
+  h = await harness(t, { confirm: () => {
+    // Race AFTER the freshly fetched preview baseline: only the server CAS can stop this write.
+    h.store.state.tasks.find(x => x.id === 'T-2').version += 1; h.store.state.revision += 1; return true;
+  } });
   const order = plan.operations.map(op => op.id), stopAt = order.indexOf('T-2');
   const notice = await h.run(plan);
   assert.match(notice, /T-2で中止しました.*409.*競合/); assert.match(notice, /自動では戻しません/);

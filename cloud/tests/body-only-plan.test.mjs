@@ -50,6 +50,7 @@ async function boot(t, tasks) {
     fetch: async (path, options) => {
       const write = options?.method === 'POST';
       if (write) posts.push(JSON.parse(options.body));
+      if (!write && control.failReads) throw new Error('synthetic read failure');
       const response = await fetch(a.url + path, { ...options, headers: { ...options?.headers, Origin: env.DASHBOARD_ORIGIN } });
       return write && control.postReply ? control.postReply(response) : response;
     } });
@@ -129,4 +130,25 @@ test('apply: a malformed or wrong successful ACK stops later writes, preserves r
     assert.equal(h.posts[1].requestId, firstId);
     assert.equal((await h.store.read()).tasks.find(t => t.id === 'ACK-1').version, 2);
   }
+});
+
+test('apply: preview baseline rejects hidden status-body edits, changed immutable fields, forged old-body summaries and offline reads', async t => {
+  const h = await boot(t, [{ id: 'BASE-1', title: 'Synthetic BASE-1', status: 'To Do', owner: '', group: null, detail: 'old', lastConfirmedAt: null }]);
+  const files = [file('BASE-1', md('BASE-1', 'To Do', 'new'))];
+  const plan = buildPlan({ localFiles: files, cloud: await h.store.read(), decisions: { body: ['BASE-1'] } });
+  for (const change of [
+    op => { op.kind = 'status'; delete op.bodyChange; },
+    op => { op.task.owner = 'unexpected'; },
+    op => { op.task.title = 'Another purpose'; },
+    op => { op.task.lastConfirmedAt = '2026-10-23T00:00:00.000Z'; },
+    op => { op.bodyChange.fromChars += 1; },
+    op => { op.bodyChange.fromSha256 = 'e'.repeat(64); },
+  ]) {
+    const bad = structuredClone(plan); change(bad.operations[0]);
+    assert.match(await send(h, bad, files), /適用前の照合で中止/);
+  }
+  h.control.failReads = true;
+  assert.match(await send(h, plan, files), /最新一覧を取得できません.*何も送っていません/);
+  assert.equal(h.posts.length, 0); assert.equal(h.shown.length, 0);
+  assert.equal((await h.store.read()).tasks[0].detail, 'old');
 });

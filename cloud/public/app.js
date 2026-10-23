@@ -99,13 +99,13 @@ function render() {
   }));
 }
 async function refresh() {
-  if (busy || document.hidden) return;
+  if (busy || document.hidden) return false;
   const generation = ++readGeneration;
   try {
     const response = await fetch('/api/tasks', { cache: 'no-store', credentials: 'same-origin', redirect: 'error', signal: AbortSignal.timeout(15000) });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const next = await response.json();
-    if (generation !== readGeneration || busy) return;
+    if (generation !== readGeneration || busy) return false;
     if (!validSnapshot(next) || !advancesSnapshot(next)) throw new Error('Invalid or older snapshot');
     snapshot = next; online = true;
     el('connection').textContent = '接続中'; el('times').textContent = `タスク一覧の同期: ${time(snapshot.observedAt)} · 30秒ごとに表示を確認`;
@@ -116,13 +116,14 @@ async function refresh() {
       if (selectedStale) el('saveNotice').textContent = '詳細を開いた後に更新されました。閉じて最新のカードを開き直してください。';
     }
   } catch {
-    if (generation !== readGeneration || busy) return;
+    if (generation !== readGeneration || busy) return false;
     online = false; el('connection').textContent = '接続できません';
     // Only claim "last received" when an accepted snapshot actually exists; otherwise nothing was ever received.
     if (fetched()) { el('times').textContent = `タスク一覧の同期: ${time(snapshot.observedAt)} · 古い可能性があります(再取得できていません)`; el('notice').textContent = '表示は最後に取得した状態で、古い可能性があります。更新ボタンで再接続できます。'; }
     else { el('times').textContent = '未取得'; el('notice').textContent = 'まだタスクを取得できていません(0件ではありません)。更新ボタンで再接続できます。'; }
   }
   el('save').disabled = busy || !online || !selected || selectedStale;
+  return online;
 }
 el('detail').onclose = () => { ++detailGeneration; selected = undefined; selectedStale = false; el('save').disabled = true; };
 el('status').append(keepOption, ...states.map((s, i) => { const option = node('option', names[i]); option.value = s; return option; }));
@@ -474,6 +475,24 @@ const planPreview = operations => operations.map(op => {
   const groupText = op.from.group === op.task.group ? '' : `・分類 ${op.from.group ?? '未分類'}→${op.task.group ?? '未分類'}`;
   return op.kind === 'content' ? `${op.id}: 本文を置き換え(${op.bodyChange.fromChars}→${op.bodyChange.toChars}文字・${statusText})${groupText}` : `${op.id}: ${statusText}(本文は変更しない)${groupText}`;
 });
+// Bind the preview to a newly fetched owner snapshot. The server's CAS still handles a race after this check.
+async function verifyPlanBaseline(operations, tasks) {
+  const problems = [];
+  for (const op of operations) {
+    const current = tasks.find(task => task.id === op.id);
+    // An uncertain/lost ACK may be replayed with the SAME request ID and exact task; the server deduplicates it.
+    if (current && current.version >= op.expectedVersion + 1 && readBackFields.every(key => current[key] === op.task[key])) continue;
+    if (op.kind === 'create') { if (current) problems.push(`${op.id}: 既に同じIDがあります`); continue; }
+    if (!current || current.version !== op.expectedVersion || current.status !== op.from.status || current.group !== op.from.group) {
+      problems.push(`${op.id}: 版数・状態・分類が変わりました`); continue;
+    }
+    if (['title', 'owner', 'lastConfirmedAt'].some(key => current[key] !== op.task[key])) { problems.push(`${op.id}: 保持する項目が一致しません`); continue; }
+    if (op.kind === 'status' && current.detail !== op.task.detail) problems.push(`${op.id}: 状態更新では本文を変更できません`);
+    if (op.kind === 'content' && (current.detail.length !== op.bodyChange.fromChars ||
+      hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(current.detail))) !== op.bodyChange.fromSha256)) problems.push(`${op.id}: 置換前本文がプランと一致しません`);
+  }
+  return problems;
+}
 async function applyPlan() {
   const notice = el('planNotice'), file = el('planFile').files?.[0];
   if (!file) { notice.textContent = 'プランファイルを選んでください。'; return; }
@@ -487,6 +506,9 @@ async function applyPlan() {
   let problems;
   try { problems = await verifySources(operations, plan); } catch { problems = ['ローカルファイルを検証できません']; }
   if (problems.length) { notice.textContent = `ローカル検証に失敗したため適用しません(何も送っていません): ${problems.slice(0, 5).join(' / ')}${problems.length > 5 ? ` ほか${problems.length - 5}件` : ''}`; return; }
+  if (!await refresh()) { notice.textContent = '公開側の最新一覧を取得できません。何も送っていません。再接続後に確認してください。'; return; }
+  try { problems = await verifyPlanBaseline(operations, snapshot.tasks); } catch { problems = ['公開側の内容を検証できません']; }
+  if (problems.length) { notice.textContent = `適用前の照合で中止しました(何も送っていません): ${problems.slice(0, 5).join(' / ')}`; return; }
   const created = operations.filter(op => op.kind === 'create').length, content = operations.filter(op => op.kind === 'content').length;
   if (!globalThis.confirm?.(`${operations.length}件を順に適用します(作成 ${created}・本文更新 ${content}・状態更新 ${operations.length - created - content})。競合した時点で中止し、巻き戻しはしません。\n${planPreview(operations).join('\n')}`)) { notice.textContent = '中止しました。何も送っていません。'; return; }
   const applied = []; busy = true;

@@ -73,7 +73,7 @@ async function boot(t, { tasks = [], confirm = () => true } = {}) {
   for (const [i, task] of tasks.entries()) await mutate(store, { requestId: `seed-${i}-${task.id}`, expectedVersion: 0, task });
   const elements = new Map(), el = id => { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id); }, posts = [], control = { failReads: false };
   const context = createContext({ document: { hidden: false, getElementById: el, createElement: () => new Element(), addEventListener() {} }, crypto: { randomUUID, subtle: webcrypto.subtle }, TextEncoder, AbortSignal, setInterval() {}, Intl, confirm,
-    fetch: (path, options) => { if (options?.method === 'POST') posts.push(JSON.parse(options.body)); else if (control.failReads) return Promise.reject(new Error('synthetic read failure')); return fetch(a.url + path, { ...options, headers: { ...options?.headers, Origin: env.DASHBOARD_ORIGIN } }); } });
+    fetch: (path, options) => { if (options?.method === 'POST') { posts.push(JSON.parse(options.body)); if (control.failAfterWrite) control.failReads = true; } else if (control.failReads) return Promise.reject(new Error('synthetic read failure')); return fetch(a.url + path, { ...options, headers: { ...options?.headers, Origin: env.DASHBOARD_ORIGIN } }); } });
   runInContext(await readFile(new URL('../public/app.js', import.meta.url), 'utf8'), context);
   await runInContext('refresh()', context);
   return { store, el, posts, context, control, board: () => text(el('board')) };
@@ -118,7 +118,7 @@ test('apply UI: a body-only content operation is one validated POST, keeps statu
   assert.match(await run(plan), /1件を適用しました/); assert.equal((await h.store.read()).revision, revision, 'same request ID: replayed, not committed twice');
   // someone else edited the card after the plan was made: CAS stops the run, nothing is overwritten
   const stale = buildPlan({ localFiles: [file('B-1', md('B-1', 'In Progress', { body: 'THIRD local body' }))], cloud: { revision, tasks: [{ ...after, version: after.version - 1 }] }, decisions: { date: '20261023', body: ['B-1'] }, now: new Date() });
-  assert.match(await run(stale, [file('B-1', md('B-1', 'In Progress', { body: 'THIRD local body' }))]), /B-1で中止しました.*409.*競合/);
+  assert.match(await run(stale, [file('B-1', md('B-1', 'In Progress', { body: 'THIRD local body' }))]), /適用前の照合で中止しました.*B-1.*版数/);
   assert.equal((await h.store.read()).tasks.find(x => x.id === 'B-1').detail, edited.bytes.toString('utf8'), 'the conflicting write changed nothing');
 });
 
@@ -145,7 +145,7 @@ test('apply UI: when the snapshot cannot be re-read after the writes, the notice
   const plan = buildPlan({ localFiles: [edited], cloud: { revision: 1, tasks: [current] }, decisions: { date: '20261023', body: ['U-1'] }, now: new Date() });
   h.el('planFile').files = [{ size: 1000, text: async () => JSON.stringify(plan) }];
   h.el('planSources').files = [{ name: 'U-1.md', size: edited.bytes.length, lastModified: edited.mtimeMs, arrayBuffer: async () => edited.bytes.buffer.slice(edited.bytes.byteOffset, edited.bytes.byteOffset + edited.bytes.length) }];
-  h.control.failReads = true;
+  h.control.failAfterWrite = true;
   await h.el('planSend').onclick();
   const notice = h.el('planNotice').textContent;
   assert.match(notice, /1件を適用しました: U-1/); assert.match(notice, /公開側の読み戻しは未確認/); assert.doesNotMatch(notice, /\d\/\d件がプラン内容と一致/);
