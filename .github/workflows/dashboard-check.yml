@@ -18,7 +18,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Synthetic non-GUI regressions
+      - name: Locate hosted Linux Chrome
+        if: runner.os == 'Linux'
+        run: echo "CHROME_PATH=$(command -v google-chrome)" >> "$GITHUB_ENV"
+      - name: Synthetic CLI regressions
         run: node scripts/check-dashboard.mjs
       - name: Static build
         run: node cloud/build.mjs
