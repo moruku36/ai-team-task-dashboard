@@ -13,6 +13,10 @@ import {pathToFileURL} from 'node:url';
 export const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const norm = value => String(value ?? '').normalize('NFKC').toLowerCase();
 const has = (text, needle) => norm(text).includes(norm(needle));
+// The card text lives in `body` (inbox/CLI cards) or `detail` (the public /api/tasks shape). `body` wins when it is present; a card that carries both with
+// DIFFERENT text is ambiguous and can settle nothing (it is reported as indeterminate, never as success and never as a contradiction).
+const bodyOf = card => typeof card?.body === 'string' ? card.body : typeof card?.detail === 'string' ? card.detail : '';
+const textAmbiguous = card => typeof card?.body === 'string' && typeof card?.detail === 'string' && card.body !== card.detail;
 const canonical = value => value && typeof value === 'object' ? Array.isArray(value) ? value.map(canonical) : Object.fromEntries(Object.keys(value).sort().map(k => [k, canonical(value[k])])) : value;
 
 const realDate = (y, mo, d) => {
@@ -47,7 +51,7 @@ const DEADLINE_LABEL = /^\s*(?:[-*・]\s*)?(?:due(?:[ _-]?date|[ _-]?at)?|deadli
 function deadlineSources(card) {
   const structured = ['due_at', 'due', 'deadline'].map(k => card[k]).filter(v => typeof v === 'string' && v.trim());
   if (structured.length) return structured;
-  return [...String(card.body ?? '').matchAll(DEADLINE_LABEL)].map(m => m[1]);
+  return [...String(bodyOf(card)).matchAll(DEADLINE_LABEL)].map(m => m[1]);
 }
 // -> 'match' | 'contradiction' | 'year_unconfirmed' | 'multiple_candidates' | 'unsupported_format' | 'not_in_deadline_field' | 'invalid_assertion'
 function dueCheck(dueAt, card) {
@@ -57,7 +61,7 @@ function dueCheck(dueAt, card) {
   if (!realDate(y, m, d)) return 'invalid_assertion';
   const sources = deadlineSources(card);
   if (sources.length === 0) {
-    const everything = `${card.title ?? ''}\n${card.body ?? ''}`, p = parseDates(everything);
+    const everything = `${card.title ?? ''}\n${bodyOf(card)}`, p = parseDates(everything);
     return p.full.length || p.yearless.length || p.unsupported ? 'not_in_deadline_field' : 'contradiction';   // no date at all = the card does not show the deadline
   }
   const candidates = new Set(); let unsupported = false;
@@ -93,7 +97,7 @@ function blockerState(card) {
   const states = [];
   if (typeof card.blocked === 'boolean') states.push(card.blocked ? 'blocked' : 'not_blocked');
   if (typeof card.blocker === 'string') states.push(interpretBlocker(card.blocker));
-  if (!states.length) for (const m of String(card.body ?? '').matchAll(BLOCKER_LABEL)) states.push(interpretBlocker(m[1]));
+  if (!states.length) for (const m of String(bodyOf(card)).matchAll(BLOCKER_LABEL)) states.push(interpretBlocker(m[1]));
   if (!states.length) return 'none';
   if (states.includes('unknown')) return 'unknown';
   return new Set(states).size > 1 ? 'unknown' : states[0];
@@ -109,7 +113,8 @@ export const meaningfulAssertions = a => Boolean(a && typeof a === 'object' && (
 export function assertionCheck(assertions, card) {
   const failures = [], indeterminate = [];
   if (!card) return {failures: ['card_missing'], indeterminate};
-  const body = `${card.title ?? ''}\n${card.body ?? ''}`;
+  if (textAmbiguous(card)) return {failures: [], indeterminate: ['card_text_ambiguous']};
+  const body = `${card.title ?? ''}\n${bodyOf(card)}`;
   if (assertions.status !== undefined && card.status !== assertions.status) failures.push('status_mismatch');
   if (assertions.due_at) {
     const due = dueCheck(assertions.due_at, card);
